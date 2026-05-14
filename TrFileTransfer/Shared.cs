@@ -18,6 +18,17 @@ namespace TrFileTransfer
         public string FileName { get; set; }
     }
 
+    /// <summary>Pre-computed file metadata for folder transfers.</summary>
+    public struct FileEntry
+    {
+        /// <summary>Absolute path to the file on disk.</summary>
+        public string Path;
+        /// <summary>File size in bytes.</summary>
+        public long Size;
+        /// <summary>Relative path within the folder (used by receiver to recreate structure).</summary>
+        public string RelativePath;
+    }
+
     /// <summary>General-purpose utility helpers.</summary>
     public static class Utils
     {

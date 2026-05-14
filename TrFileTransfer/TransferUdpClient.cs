@@ -441,11 +441,5 @@ namespace TrFileTransfer
             Utils.LogTo(OnLog, msg);
         }
 
-        private struct FileEntry
-        {
-            public string Path;
-            public long Size;
-            public string RelativePath;
-        }
     }
 }

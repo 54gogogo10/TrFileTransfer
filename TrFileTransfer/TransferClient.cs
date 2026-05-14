@@ -198,6 +198,8 @@ namespace TrFileTransfer
 
                 foreach (var entry in fileEntries)
                 {
+                    if (ct.IsCancellationRequested) break;
+
                     // File entry header: fileSize(8) + pathLen(2) + relativePath
                     byte[] relPathBytes = System.Text.Encoding.UTF8.GetBytes(entry.RelativePath);
                     var fileHeader = new byte[8 + 2 + relPathBytes.Length];
@@ -296,11 +298,5 @@ namespace TrFileTransfer
             Utils.LogTo(OnLog, msg);
         }
 
-        private struct FileEntry
-        {
-            public string Path;
-            public long Size;
-            public string RelativePath;
-        }
     }
 }
