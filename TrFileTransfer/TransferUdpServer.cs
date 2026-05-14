@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 
 namespace TrFileTransfer
 {
+    /// <summary>Reliable UDP file/folder receiver (Go-Back-N ARQ, SHA256 verification).</summary>
     public class TransferUdpServer
     {
         private UdpClient _udp;
@@ -20,21 +21,34 @@ namespace TrFileTransfer
         private byte[] _pendingPacketData;
         private IPEndPoint _pendingPacketEp;
 
+        /// <summary>Fired for every log message.</summary>
         public event Action<string> OnLog;
+        /// <summary>Fired periodically during transfer with progress info.</summary>
         public event Action<TransferProgress> OnProgress;
+        /// <summary>Fired when a non-fatal error occurs.</summary>
         public event Action<string> OnError;
+        /// <summary>Fired when a single transfer completes. Server keeps listening.</summary>
         public event Action OnTransferComplete;
+        /// <summary>Fired when the server starts listening.</summary>
         public event Action OnStarted;
+        /// <summary>Fired when the server stops.</summary>
         public event Action OnStopped;
 
+        /// <summary>Whether the server is currently listening.</summary>
         public bool IsRunning { get { return _isRunning; } }
 
+        /// <summary>
+        /// Creates a UDP server that listens on all interfaces for incoming transfers.
+        /// </summary>
+        /// <param name="port">Port to listen on.</param>
+        /// <param name="saveDirectory">Directory where received files are saved.</param>
         public TransferUdpServer(int port, string saveDirectory)
         {
             _port = port;
             _saveDirectory = saveDirectory;
         }
 
+        /// <summary>Starts listening on the configured port. Fires OnStarted on success.</summary>
         public void Start()
         {
             _cts = new CancellationTokenSource();
@@ -65,6 +79,7 @@ namespace TrFileTransfer
                 TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
 
+        /// <summary>Stops the server and closes the UDP socket.</summary>
         public void Stop()
         {
             _isRunning = false;

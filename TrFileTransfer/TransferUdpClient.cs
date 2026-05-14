@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 
 namespace TrFileTransfer
 {
+    /// <summary>Reliable UDP file/folder sender (Go-Back-N ARQ, 32-chunk window, SHA256).</summary>
     public class TransferUdpClient
     {
         private UdpClient _udp;
@@ -18,15 +19,29 @@ namespace TrFileTransfer
         private readonly int _windowSize;
         private volatile bool _isRunning;
 
+        /// <summary>Fired for every log message.</summary>
         public event Action<string> OnLog;
+        /// <summary>Fired periodically during transfer with progress info.</summary>
         public event Action<TransferProgress> OnProgress;
+        /// <summary>Fired when a non-fatal error occurs.</summary>
         public event Action<string> OnError;
+        /// <summary>Fired when the transfer completes successfully.</summary>
         public event Action OnTransferComplete;
+        /// <summary>Fired when the transfer starts.</summary>
         public event Action OnStarted;
+        /// <summary>Fired when the transfer stops (completed, cancelled, or error).</summary>
         public event Action OnStopped;
 
+        /// <summary>Whether a transfer is currently in progress.</summary>
         public bool IsRunning { get { return _isRunning; } }
 
+        /// <summary>
+        /// Creates a reliable UDP client for sending files or folders.
+        /// </summary>
+        /// <param name="serverIp">Target server IPv4 address.</param>
+        /// <param name="port">Target server port.</param>
+        /// <param name="filePath">Path to the file or folder to send.</param>
+        /// <param name="windowSize">Sliding window size in chunks (default 32).</param>
         public TransferUdpClient(string serverIp, int port, string filePath, int windowSize = UdpProtocol.DefaultWindowSize)
         {
             _serverIp = serverIp;
@@ -35,11 +50,14 @@ namespace TrFileTransfer
             _windowSize = windowSize;
         }
 
+        /// <summary>Sends the file specified in the constructor over reliable UDP.</summary>
         public async Task SendAsync()
         {
             await RunUdpTransfer(SendUdpInternal);
         }
 
+        /// <summary>Sends a folder recursively over reliable UDP.</summary>
+        /// <param name="folderPath">Path to the folder to send.</param>
         public async Task SendFolderAsync(string folderPath)
         {
             await RunUdpTransfer(ct => SendUdpFolderInternal(folderPath, ct));
@@ -77,6 +95,7 @@ namespace TrFileTransfer
             }
         }
 
+        /// <summary>Cancels the current transfer and closes the UDP socket. Safe from any thread.</summary>
         public void Cancel()
         {
             var cts = _cts;

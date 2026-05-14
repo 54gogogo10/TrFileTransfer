@@ -3,17 +3,25 @@ using System.IO;
 
 namespace TrFileTransfer
 {
+    /// <summary>Progress snapshot emitted periodically during a transfer.</summary>
     public class TransferProgress
     {
+        /// <summary>Bytes transferred so far.</summary>
         public long BytesTransferred { get; set; }
+        /// <summary>Total bytes to transfer.</summary>
         public long TotalBytes { get; set; }
+        /// <summary>Current transfer speed in bytes per second.</summary>
         public double SpeedBytesPerSecond { get; set; }
+        /// <summary>Elapsed time since the transfer started.</summary>
         public TimeSpan Elapsed { get; set; }
+        /// <summary>Name of the file or folder being transferred.</summary>
         public string FileName { get; set; }
     }
 
+    /// <summary>General-purpose utility helpers.</summary>
     public static class Utils
     {
+        /// <summary>Formats a byte count into a human-readable string (e.g. "15.3 MB").</summary>
         public static string FormatSize(long bytes)
         {
             string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
@@ -27,6 +35,7 @@ namespace TrFileTransfer
             return string.Format("{0:F1} {1}", size, suffixes[idx]);
         }
 
+        /// <summary>Timing-safe byte array comparison. Used for SHA256 hash verification.</summary>
         public static bool ConstantTimeEquals(byte[] a, byte[] b)
         {
             if (a.Length != b.Length) return false;
@@ -36,12 +45,14 @@ namespace TrFileTransfer
             return diff == 0;
         }
 
+        /// <summary>Fires a log event with a timestamp prefix, if the handler is non-null.</summary>
         public static void LogTo(Action<string> handler, string msg)
         {
             if (handler != null)
                 handler(string.Format("[{0:HH:mm:ss}] {1}", DateTime.Now, msg));
         }
 
+        /// <summary>Sanitizes a relative file path by replacing ".." and "." segments to prevent directory traversal.</summary>
         public static string SanitizeRelativePath(string path)
         {
             path = path.Replace('\\', '/').TrimStart('/');
@@ -56,6 +67,7 @@ namespace TrFileTransfer
             return string.Join(Path.DirectorySeparatorChar.ToString(), parts);
         }
 
+        /// <summary>Returns a unique file/directory path by appending _1, _2, etc. when collisions exist.</summary>
         public static string GetUniqueSavePath(string directory, string name)
         {
             string savePath = Path.Combine(directory, name);

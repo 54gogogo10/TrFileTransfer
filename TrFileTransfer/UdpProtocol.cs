@@ -2,22 +2,36 @@ using System;
 
 namespace TrFileTransfer
 {
+    /// <summary>UDP wire protocol constants and packet helpers for Go-Back-N reliable transfer.</summary>
     public static class UdpProtocol
     {
+        /// <summary>Magic number for packet identification (0x55445054 = "UDPT").</summary>
         public const int Magic = 0x55445054;
-        public const int HeaderSize = 14;   // magic(4) + type(1) + reserved(1) + seq(4) + bodyLen(4)
-        public const int MaxChunkSize = 32768;  // 32 KB, safe for all networks
+        /// <summary>Packet header size: magic(4) + type(1) + reserved(1) + seq(4) + bodyLen(4).</summary>
+        public const int HeaderSize = 14;
+        /// <summary>Maximum payload per data chunk (32 KB).</summary>
+        public const int MaxChunkSize = 32768;
+        /// <summary>Default sliding window size in chunks.</summary>
         public const int DefaultWindowSize = 32;
+        /// <summary>Receive timeout in milliseconds.</summary>
         public const int TimeoutMs = 3000;
+        /// <summary>Maximum consecutive timeouts before aborting.</summary>
         public const int MaxRetries = 15;
 
+        /// <summary>HELLO packet — initiates a new file transfer.</summary>
         public const byte TypeHello   = 0;
+        /// <summary>DATA packet — carries a file chunk.</summary>
         public const byte TypeData    = 1;
+        /// <summary>ACK packet — cumulative acknowledgement.</summary>
         public const byte TypeAck     = 2;
+        /// <summary>FIN packet — signals end of file; body contains SHA256 hash.</summary>
         public const byte TypeFin     = 3;
+        /// <summary>FIN_ACK packet — server confirms hash verification passed.</summary>
         public const byte TypeFinAck     = 4;
+        /// <summary>FolderEnd packet — signals end of folder transfer.</summary>
         public const byte TypeFolderEnd = 5;
 
+        /// <summary>Builds a complete UDP packet with header and optional body.</summary>
         public static byte[] BuildPacket(byte type, int sequence, byte[] body)
         {
             int bodyLen = body != null ? body.Length : 0;
@@ -32,6 +46,7 @@ namespace TrFileTransfer
             return packet;
         }
 
+        /// <summary>Parses and validates a packet header. Returns false if magic, length, or bodyLen is invalid.</summary>
         public static bool ParseHeader(byte[] packet, out byte type, out int sequence, out int bodyLen)
         {
             type = 0;

@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 
 namespace TrFileTransfer
 {
+    /// <summary>TCP file/folder receiver with SHA256 integrity verification.</summary>
     public class TransferServer
     {
         private TcpListener _listener;
@@ -18,15 +19,29 @@ namespace TrFileTransfer
         private readonly int _bufferSize;
         private volatile bool _isRunning;
 
+        /// <summary>Fired for every log message.</summary>
         public event Action<string> OnLog;
+        /// <summary>Fired periodically during transfer with progress info.</summary>
         public event Action<TransferProgress> OnProgress;
+        /// <summary>Fired when a non-fatal error occurs.</summary>
         public event Action<string> OnError;
+        /// <summary>Fired when a single transfer completes. Server keeps listening.</summary>
         public event Action OnTransferComplete;
+        /// <summary>Fired when the server starts listening.</summary>
         public event Action OnStarted;
+        /// <summary>Fired when the server stops.</summary>
         public event Action OnStopped;
 
+        /// <summary>Whether the server is currently listening.</summary>
         public bool IsRunning { get { return _isRunning; } }
 
+        /// <summary>
+        /// Creates a TCP server that listens for incoming file transfers.
+        /// </summary>
+        /// <param name="bindAddress">IPv4 address to bind to, or "0.0.0.0" for all interfaces.</param>
+        /// <param name="port">Port to listen on.</param>
+        /// <param name="saveDirectory">Directory where received files are saved.</param>
+        /// <param name="bufferSize">I/O buffer size in bytes (default 1 MB).</param>
         public TransferServer(string bindAddress, int port, string saveDirectory, int bufferSize = 1024 * 1024)
         {
             _bindAddress = bindAddress;
@@ -35,6 +50,7 @@ namespace TrFileTransfer
             _bufferSize = bufferSize;
         }
 
+        /// <summary>Starts listening for incoming connections. Fires OnStarted on success.</summary>
         public void Start()
         {
             _cts = new CancellationTokenSource();
@@ -70,6 +86,7 @@ namespace TrFileTransfer
                 TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
 
+        /// <summary>Stops the server and closes the listening socket.</summary>
         public void Stop()
         {
             _isRunning = false;

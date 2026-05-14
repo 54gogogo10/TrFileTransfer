@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 
 namespace TrFileTransfer
 {
+    /// <summary>TCP file/folder sender with SHA256 integrity verification.</summary>
     public class TransferClient
     {
         private CancellationTokenSource _cts;
@@ -16,15 +17,29 @@ namespace TrFileTransfer
         private readonly int _bufferSize;
         private volatile bool _isRunning;
 
+        /// <summary>Fired for every log message.</summary>
         public event Action<string> OnLog;
+        /// <summary>Fired periodically during transfer with progress info.</summary>
         public event Action<TransferProgress> OnProgress;
+        /// <summary>Fired when a non-fatal error occurs.</summary>
         public event Action<string> OnError;
+        /// <summary>Fired when the transfer completes successfully.</summary>
         public event Action OnTransferComplete;
+        /// <summary>Fired when the transfer starts.</summary>
         public event Action OnStarted;
+        /// <summary>Fired when the transfer stops (completed, cancelled, or error).</summary>
         public event Action OnStopped;
 
+        /// <summary>Whether a transfer is currently in progress.</summary>
         public bool IsRunning { get { return _isRunning; } }
 
+        /// <summary>
+        /// Creates a TCP client for sending files or folders.
+        /// </summary>
+        /// <param name="serverIp">Target server IPv4 address.</param>
+        /// <param name="port">Target server port.</param>
+        /// <param name="filePath">Path to the file or folder to send.</param>
+        /// <param name="bufferSize">I/O buffer size in bytes (default 1 MB).</param>
         public TransferClient(string serverIp, int port, string filePath, int bufferSize = 1024 * 1024)
         {
             _serverIp = serverIp;
@@ -33,11 +48,14 @@ namespace TrFileTransfer
             _bufferSize = bufferSize;
         }
 
+        /// <summary>Sends the file specified in the constructor over TCP.</summary>
         public async Task SendAsync()
         {
             await RunTransfer(SendFileInternal);
         }
 
+        /// <summary>Sends a folder recursively over TCP.</summary>
+        /// <param name="folderPath">Path to the folder to send.</param>
         public async Task SendFolderAsync(string folderPath)
         {
             await RunTransfer(ct => SendFolderInternal(folderPath, ct));
@@ -74,6 +92,7 @@ namespace TrFileTransfer
             }
         }
 
+        /// <summary>Cancels the current transfer. Safe to call from any thread.</summary>
         public void Cancel()
         {
             var cts = _cts;
