@@ -8,6 +8,7 @@ using System.Windows.Forms;
 
 namespace TrFileTransfer
 {
+    /// <summary>Main application window — mode/protocol selector, server/client panels, progress, and log.</summary>
     public class MainForm : Form
     {
         // Language
@@ -66,6 +67,7 @@ namespace TrFileTransfer
         private TransferUdpClient _clientUdp;
         private bool _transferActive;
 
+        /// <summary>Initializes the form, populates NIC list, and applies default language.</summary>
         public MainForm()
         {
             InitializeComponent();
@@ -585,6 +587,7 @@ namespace TrFileTransfer
                 _lstLog.Items.RemoveAt(0);
         }
 
+        /// <summary>Stops any active transfer before closing the window.</summary>
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             if (_server != null)

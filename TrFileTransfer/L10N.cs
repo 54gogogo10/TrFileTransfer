@@ -1,6 +1,7 @@
 namespace TrFileTransfer
 {
     /// <summary>Localization strings for English and Chinese. Set IsChinese to switch language.</summary>
+    #pragma warning disable 1591
     public static class L
     {
         /// <summary>When true, all property getters return Chinese text; otherwise English.</summary>
