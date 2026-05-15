@@ -9,10 +9,10 @@ namespace TrFileTransfer
         public const int Magic = 0x55445054;
         /// <summary>Packet header size: magic(4) + type(1) + reserved(1) + seq(4) + bodyLen(4).</summary>
         public const int HeaderSize = 14;
-        /// <summary>Maximum payload per data chunk (32 KB).</summary>
-        public const int MaxChunkSize = 32768;
-        /// <summary>Default sliding window size in chunks.</summary>
-        public const int DefaultWindowSize = 32;
+        /// <summary>Maximum payload per data chunk (1400 bytes — fits in a single Ethernet frame without IP fragmentation).</summary>
+        public const int MaxChunkSize = 1400;
+        /// <summary>Default sliding window size in chunks (256 × 1400 = 358 KB per window).</summary>
+        public const int DefaultWindowSize = 256;
         /// <summary>Receive timeout in milliseconds.</summary>
         public const int TimeoutMs = 3000;
         /// <summary>Maximum consecutive timeouts before aborting.</summary>
@@ -30,6 +30,8 @@ namespace TrFileTransfer
         public const byte TypeFinAck     = 4;
         /// <summary>FolderEnd packet — signals end of folder transfer.</summary>
         public const byte TypeFolderEnd = 5;
+        /// <summary>NAK packet — requests retransmission from a specific seq (body: empty, seq = first missing chunk).</summary>
+        public const byte TypeNak     = 6;
 
         /// <summary>Builds a complete UDP packet with header and optional body.</summary>
         public static byte[] BuildPacket(byte type, int sequence, byte[] body)

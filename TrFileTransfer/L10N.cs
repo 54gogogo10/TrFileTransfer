@@ -283,6 +283,54 @@ namespace TrFileTransfer
                 ? string.Format("超时，从 #{0} 重传", seqBase)
                 : string.Format("Timeout, retransmitting from #{0}", seqBase);
         }
+        // ---- Monitor mode ----
+        public static string MonitorMode { get { return IsChinese ? "监控模式" : "Monitor Mode"; } }
+        public static string MonitorLabel { get { return IsChinese ? "监控目录:" : "Monitor Dir:"; } }
+        public static string StartMonitor { get { return IsChinese ? "开始监控" : "Start Monitor"; } }
+        public static string StopMonitor { get { return IsChinese ? "停止监控" : "Stop Monitor"; } }
+        public static string MonitorWaiting { get { return IsChinese ? "等待新文件..." : "Waiting for new files..."; } }
+        public static string MonitorStopped { get { return IsChinese ? "监控已停止。" : "Monitor stopped."; } }
+        public static string MonitorFileWaiting(object fileName, int secs)
+        {
+            return IsChinese
+                ? string.Format("等待文件写入完成: {0} ({1}秒)", fileName, secs)
+                : string.Format("Waiting for file: {0} ({1}s)", fileName, secs);
+        }
+        public static string MonitorFileSent(object fileName)
+        {
+            return IsChinese
+                ? string.Format("已发送: {0}", fileName)
+                : string.Format("Sent: {0}", fileName);
+        }
+        public static string MonitorFileSendFailed(object fileName, string err)
+        {
+            return IsChinese
+                ? string.Format("发送失败: {0} - {1}", fileName, err)
+                : string.Format("Send failed: {0} - {1}", fileName, err);
+        }
+        public static string MonitorFileNotReady(object fileName)
+        {
+            return IsChinese
+                ? string.Format("文件未就绪，移至队列末尾: {0}", fileName)
+                : string.Format("File not ready, moved to back of queue: {0}", fileName);
+        }
+        public static string MonitorDirNotExist { get { return IsChinese ? "监控目录不存在。" : "Monitor directory does not exist."; } }
+        public static string MonitorStarted(object path)
+        {
+            return IsChinese
+                ? string.Format("[监控] 开始监控: {0}", path)
+                : string.Format("[Monitor] Started: {0}", path);
+        }
+        public static string MonitorLogStopped
+        {
+            get
+            {
+                return IsChinese
+                    ? "[监控] 监控已停止。"
+                    : "[Monitor] Monitor stopped.";
+            }
+        }
+
         public static string UdpC_FolderNotConfirmed
         {
             get

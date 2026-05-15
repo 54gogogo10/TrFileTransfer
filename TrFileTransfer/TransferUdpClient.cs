@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace TrFileTransfer
 {
-    /// <summary>Reliable UDP file/folder sender (Go-Back-N ARQ, 32-chunk window, SHA256).</summary>
+    /// <summary>Reliable UDP file/folder sender (Go-Back-N ARQ, SHA256).</summary>
     public class TransferUdpClient
     {
         private UdpClient _udp;
@@ -29,19 +29,13 @@ namespace TrFileTransfer
         public event Action OnTransferComplete;
         /// <summary>Fired when the transfer starts.</summary>
         public event Action OnStarted;
-        /// <summary>Fired when the transfer stops (completed, cancelled, or error).</summary>
+        /// <summary>Fired when the transfer stops.</summary>
         public event Action OnStopped;
 
         /// <summary>Whether a transfer is currently in progress.</summary>
         public bool IsRunning { get { return _isRunning; } }
 
-        /// <summary>
-        /// Creates a reliable UDP client for sending files or folders.
-        /// </summary>
-        /// <param name="serverIp">Target server IPv4 address.</param>
-        /// <param name="port">Target server port.</param>
-        /// <param name="filePath">Path to the file or folder to send.</param>
-        /// <param name="windowSize">Sliding window size in chunks (default 32).</param>
+        /// <summary>Creates a reliable UDP client for sending files or folders.</summary>
         public TransferUdpClient(string serverIp, int port, string filePath, int windowSize = UdpProtocol.DefaultWindowSize)
         {
             _serverIp = serverIp;
@@ -57,7 +51,6 @@ namespace TrFileTransfer
         }
 
         /// <summary>Sends a folder recursively over reliable UDP.</summary>
-        /// <param name="folderPath">Path to the folder to send.</param>
         public async Task SendFolderAsync(string folderPath)
         {
             await RunUdpTransfer(ct => SendUdpFolderInternal(folderPath, ct));
@@ -73,7 +66,7 @@ namespace TrFileTransfer
 
             try
             {
-                await transferAction(_cts.Token);
+                await transferAction(_cts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -103,12 +96,17 @@ namespace TrFileTransfer
             try { _udp.Close(); } catch { }
         }
 
+        private UdpClient CreateUdpClient()
+        {
+            var udp = new UdpClient();
+            udp.Client.SendBufferSize = 4 * 1024 * 1024;
+            udp.Client.ReceiveBufferSize = 4 * 1024 * 1024;
+            return udp;
+        }
+
         private async Task SendUdpInternal(CancellationToken ct)
         {
-            _udp = new UdpClient();
-            _udp.Client.SendBufferSize = 4 * 1024 * 1024;
-            _udp.Client.ReceiveBufferSize = 4 * 1024 * 1024;
-
+            _udp = CreateUdpClient();
             var serverEp = new IPEndPoint(IPAddress.Parse(_serverIp), _port);
 
             var fileInfo = new FileInfo(_filePath);
@@ -120,7 +118,7 @@ namespace TrFileTransfer
 
             var helloBody = BuildHelloBody(0x00, fileSize, nameBytes);
             var helloPacket = UdpProtocol.BuildPacket(UdpProtocol.TypeHello, 0, helloBody);
-            await _udp.SendAsync(helloPacket, helloPacket.Length, serverEp);
+            await _udp.SendAsync(helloPacket, helloPacket.Length, serverEp).ConfigureAwait(false);
 
             Log(L.UdpC_Sending(fileName, Utils.FormatSize(fileSize), _windowSize));
 
@@ -141,10 +139,7 @@ namespace TrFileTransfer
 
         private async Task SendUdpFolderInternal(string folderPath, CancellationToken ct)
         {
-            _udp = new UdpClient();
-            _udp.Client.SendBufferSize = 4 * 1024 * 1024;
-            _udp.Client.ReceiveBufferSize = 4 * 1024 * 1024;
-
+            _udp = CreateUdpClient();
             var serverEp = new IPEndPoint(IPAddress.Parse(_serverIp), _port);
 
             string folderName = Path.GetFileName(folderPath);
@@ -160,7 +155,6 @@ namespace TrFileTransfer
                 return;
             }
 
-            // Pre-compute file sizes to avoid creating FileInfo twice per file
             var fileEntries = new FileEntry[files.Length];
             long totalSize = 0;
             for (int i = 0; i < files.Length; i++)
@@ -189,7 +183,7 @@ namespace TrFileTransfer
 
                 var helloBody = BuildHelloBody(0x01, entry.Size, pathBytes);
                 var helloPacket = UdpProtocol.BuildPacket(UdpProtocol.TypeHello, 0, helloBody);
-                await _udp.SendAsync(helloPacket, helloPacket.Length, serverEp);
+                await _udp.SendAsync(helloPacket, helloPacket.Length, serverEp).ConfigureAwait(false);
 
                 if (!await WaitForAckAsync()) return;
 
@@ -211,9 +205,8 @@ namespace TrFileTransfer
                     });
             }
 
-            // Send folder-end confirmation to server
             var folderEndPacket = UdpProtocol.BuildPacket(UdpProtocol.TypeFolderEnd, 0, null);
-            await _udp.SendAsync(folderEndPacket, folderEndPacket.Length, serverEp);
+            await _udp.SendAsync(folderEndPacket, folderEndPacket.Length, serverEp).ConfigureAwait(false);
 
             if (!await WaitForAckAsync())
             {
@@ -250,157 +243,188 @@ namespace TrFileTransfer
             int hashedUpTo = -1;
             var sha256 = SHA256.Create();
             FileStream fs = null;
+            byte[] fileHash = null;
             bool finAckReceived = false;
 
             try
             {
                 fs = new FileStream(filePath, FileMode.Open, FileAccess.Read,
-                    FileShare.Read, UdpProtocol.MaxChunkSize, FileOptions.SequentialScan);
+                    FileShare.Read, 65536, FileOptions.SequentialScan);
 
                 int sendBase = 0;
                 int nextSeqNum = 0;
                 int timeoutCount = 0;
                 long filePos = 0;
 
-                while (sendBase < totalChunks && !ct.IsCancellationRequested)
+                while (true)
                 {
-                    while (nextSeqNum < sendBase + _windowSize && nextSeqNum < totalChunks)
+                    // --- Data phase: send chunks within window, receive ACKs ---
+                    while (sendBase < totalChunks && !ct.IsCancellationRequested)
                     {
-                        int offset = nextSeqNum * UdpProtocol.MaxChunkSize;
-                        int chunkSize = (nextSeqNum < totalChunks - 1)
-                            ? UdpProtocol.MaxChunkSize
-                            : (int)(fileSize - (long)offset);
-
-                        var chunkData = new byte[chunkSize];
-                        if (offset != filePos)
-                            fs.Seek(offset, SeekOrigin.Begin);
-                        int totalRead = 0;
-                        while (totalRead < chunkSize)
+                        while (nextSeqNum < sendBase + _windowSize && nextSeqNum < totalChunks)
                         {
-                            int n = await fs.ReadAsync(chunkData, totalRead, chunkSize - totalRead, ct);
-                            if (n == 0) break;
-                            totalRead += n;
-                        }
-                        filePos = offset + totalRead;
+                            int offset = nextSeqNum * UdpProtocol.MaxChunkSize;
+                            int chunkSize = (nextSeqNum < totalChunks - 1)
+                                ? UdpProtocol.MaxChunkSize
+                                : (int)(fileSize - (long)offset);
 
-                        var dataPacket = UdpProtocol.BuildPacket(UdpProtocol.TypeData, nextSeqNum, chunkData);
-                        await udp.SendAsync(dataPacket, dataPacket.Length, serverEp);
-
-                        if (nextSeqNum > hashedUpTo)
-                        {
-                            sha256.TransformBlock(chunkData, 0, chunkSize, null, 0);
-                            hashedUpTo = nextSeqNum;
-                        }
-
-                        nextSeqNum++;
-                    }
-
-                    udp.Client.ReceiveTimeout = UdpProtocol.TimeoutMs;
-                    try
-                    {
-                        var result = await udp.ReceiveAsync();
-                        byte type;
-                        int seq, bodyLen;
-                        if (!UdpProtocol.ParseHeader(result.Buffer, out type, out seq, out bodyLen))
-                            continue;
-
-                        if (type == UdpProtocol.TypeAck)
-                        {
-                            if (seq >= sendBase)
+                            var chunkData = new byte[chunkSize];
+                            if (offset != filePos)
+                                fs.Seek(offset, SeekOrigin.Begin);
+                            int totalRead = 0;
+                            while (totalRead < chunkSize)
                             {
-                                sendBase = seq + 1;
-                                timeoutCount = 0;
+                                int n = await fs.ReadAsync(chunkData, totalRead, chunkSize - totalRead, ct).ConfigureAwait(false);
+                                if (n == 0) break;
+                                totalRead += n;
+                            }
+                            filePos = offset + totalRead;
+
+                            var dataPacket = UdpProtocol.BuildPacket(UdpProtocol.TypeData, nextSeqNum, chunkData);
+                            await udp.SendAsync(dataPacket, dataPacket.Length, serverEp).ConfigureAwait(false);
+
+                            if (nextSeqNum > hashedUpTo)
+                            {
+                                sha256.TransformBlock(chunkData, 0, chunkSize, null, 0);
+                                hashedUpTo = nextSeqNum;
+                            }
+
+                            nextSeqNum++;
+                        }
+
+                        udp.Client.ReceiveTimeout = UdpProtocol.TimeoutMs;
+                        try
+                        {
+                            var result = await udp.ReceiveAsync().ConfigureAwait(false);
+                            byte type;
+                            int seq, bodyLen;
+                            if (!UdpProtocol.ParseHeader(result.Buffer, out type, out seq, out bodyLen))
+                                continue;
+
+                            if (type == UdpProtocol.TypeAck)
+                            {
+                                if (seq >= sendBase)
+                                {
+                                    sendBase = seq + 1;
+                                    timeoutCount = 0;
+                                }
+                            }
+                            else if (type == UdpProtocol.TypeNak)
+                            {
+                                if (seq >= sendBase && seq < nextSeqNum)
+                                {
+                                    nextSeqNum = seq;
+                                    timeoutCount = 0;
+                                }
+                            }
+
+                            if (reportProgress && (progressTimer.ElapsedMilliseconds >= 100 || sendBase >= totalChunks))
+                            {
+                                progressTimer.Restart();
+                                long acked = sendBase >= totalChunks
+                                    ? fileSize
+                                    : Math.Min((long)sendBase * UdpProtocol.MaxChunkSize, fileSize);
+                                var handler = OnProgress;
+                                if (handler != null)
+                                    handler(new TransferProgress
+                                    {
+                                        BytesTransferred = acked,
+                                        TotalBytes = fileSize,
+                                        SpeedBytesPerSecond = acked / Math.Max(sw.Elapsed.TotalSeconds, 0.001),
+                                        Elapsed = sw.Elapsed,
+                                        FileName = displayName
+                                    });
                             }
                         }
-
-                        if (reportProgress && (progressTimer.ElapsedMilliseconds >= 100 || sendBase >= totalChunks))
+                        catch (SocketException)
                         {
-                            progressTimer.Restart();
-                            long acked = sendBase >= totalChunks
-                                ? fileSize
-                                : Math.Min((long)sendBase * UdpProtocol.MaxChunkSize, fileSize);
-                            var handler = OnProgress;
-                            if (handler != null)
-                                handler(new TransferProgress
+                            timeoutCount++;
+                            if (timeoutCount > UdpProtocol.MaxRetries)
+                            {
+                                Log(L.UdpC_TooManyRetransmissions);
+                                return false;
+                            }
+                            nextSeqNum = sendBase;
+                            Log(L.UdpC_TimeoutRetransmitting(sendBase));
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                            return false;
+                        }
+                    }
+
+                    if (ct.IsCancellationRequested) return false;
+                    if (sendBase < totalChunks) continue; // spurious wake from cancelled receive
+
+                    // --- All data ACKed; compute hash (once) and enter FIN phase ---
+                    if (fileHash == null)
+                    {
+                        sha256.TransformFinalBlock(new byte[0], 0, 0);
+                        fileHash = sha256.Hash;
+
+                        if (reportProgress)
+                        {
+                            var finalHandler = OnProgress;
+                            if (finalHandler != null)
+                                finalHandler(new TransferProgress
                                 {
-                                    BytesTransferred = acked,
+                                    BytesTransferred = fileSize,
                                     TotalBytes = fileSize,
-                                    SpeedBytesPerSecond = acked / Math.Max(sw.Elapsed.TotalSeconds, 0.001),
+                                    SpeedBytesPerSecond = fileSize / Math.Max(sw.Elapsed.TotalSeconds, 0.001),
                                     Elapsed = sw.Elapsed,
                                     FileName = displayName
                                 });
                         }
                     }
-                    catch (SocketException)
+
+                    // --- FIN phase ---
+                    finAckReceived = false;
+                    bool needsResend = false;
+                    for (int finRetries = 0; finRetries < 5 && !ct.IsCancellationRequested && !finAckReceived && !needsResend; finRetries++)
                     {
-                        timeoutCount++;
-                        if (timeoutCount > UdpProtocol.MaxRetries)
+                        var finPacket = UdpProtocol.BuildPacket(UdpProtocol.TypeFin, 0, fileHash);
+                        await udp.SendAsync(finPacket, finPacket.Length, serverEp).ConfigureAwait(false);
+
+                        var deadline = DateTime.UtcNow.AddMilliseconds(UdpProtocol.TimeoutMs);
+                        while (DateTime.UtcNow < deadline && !finAckReceived && !needsResend && !ct.IsCancellationRequested)
                         {
-                            Log(L.UdpC_TooManyRetransmissions);
-                            return false;
-                        }
-                        nextSeqNum = sendBase;
-                        Log(L.UdpC_TimeoutRetransmitting(sendBase));
-                    }
-                    catch (ObjectDisposedException)
-                    {
-                        return false;
-                    }
-                }
-
-                // Send FIN and wait for FIN_ACK from server
-                sha256.TransformFinalBlock(new byte[0], 0, 0);
-
-                // Final progress update before FIN handshake
-                if (reportProgress)
-                {
-                    var finalHandler = OnProgress;
-                    if (finalHandler != null)
-                        finalHandler(new TransferProgress
-                        {
-                            BytesTransferred = fileSize,
-                            TotalBytes = fileSize,
-                            SpeedBytesPerSecond = fileSize / Math.Max(sw.Elapsed.TotalSeconds, 0.001),
-                            Elapsed = sw.Elapsed,
-                            FileName = displayName
-                        });
-                }
-
-                finAckReceived = false;
-                for (int finRetries = 0; finRetries < 5 && !ct.IsCancellationRequested && !finAckReceived; finRetries++)
-                {
-                    var finPacket = UdpProtocol.BuildPacket(UdpProtocol.TypeFin, 0, sha256.Hash);
-                    await udp.SendAsync(finPacket, finPacket.Length, serverEp);
-
-                    var deadline = DateTime.UtcNow.AddMilliseconds(UdpProtocol.TimeoutMs);
-                    while (DateTime.UtcNow < deadline && !finAckReceived && !ct.IsCancellationRequested)
-                    {
-                        int remaining = Math.Max((int)(deadline - DateTime.UtcNow).TotalMilliseconds, 1);
-                        udp.Client.ReceiveTimeout = remaining;
-                        try
-                        {
-                            var result = await udp.ReceiveAsync();
-                            byte dtype; int dseq, dbl;
-                            if (UdpProtocol.ParseHeader(result.Buffer, out dtype, out dseq, out dbl))
+                            int remaining = Math.Max((int)(deadline - DateTime.UtcNow).TotalMilliseconds, 1);
+                            udp.Client.ReceiveTimeout = remaining;
+                            try
                             {
-                                if (dtype == UdpProtocol.TypeFinAck)
-                                    finAckReceived = true;
-                                else if (dtype == UdpProtocol.TypeFin)
+                                var result = await udp.ReceiveAsync().ConfigureAwait(false);
+                                byte dtype; int dseq, dbl;
+                                if (UdpProtocol.ParseHeader(result.Buffer, out dtype, out dseq, out dbl))
                                 {
-                                    Log(L.S_HashFailed(displayName));
-                                    var errHandler = OnError;
-                                    if (errHandler != null) errHandler(L.S_HashFailed(displayName));
-                                    return false;
+                                    if (dtype == UdpProtocol.TypeFinAck)
+                                        finAckReceived = true;
+                                    else if (dtype == UdpProtocol.TypeFin)
+                                    {
+                                        Log(L.S_HashFailed(displayName));
+                                        var errHandler = OnError;
+                                        if (errHandler != null) errHandler(L.S_HashFailed(displayName));
+                                        return false;
+                                    }
+                                    else if (dtype == UdpProtocol.TypeAck)
+                                    {
+                                        if (dseq + 1 < totalChunks)
+                                        {
+                                            sendBase = dseq + 1;
+                                            nextSeqNum = sendBase;
+                                            timeoutCount = 0;
+                                            needsResend = true;
+                                        }
+                                    }
                                 }
                             }
+                            catch (SocketException) { break; }
+                            catch (ObjectDisposedException) { return false; }
                         }
-                        catch (SocketException) { break; }
-                        catch (ObjectDisposedException) { break; }
                     }
-                }
 
-                if (!finAckReceived)
-                {
+                    if (needsResend) continue; // jump back to data phase
+                    if (finAckReceived) return true;
+                    // FIN retries exhausted
                     Log(L.UdpC_ServerNotResponding);
                     return false;
                 }
@@ -410,8 +434,6 @@ namespace TrFileTransfer
                 if (sha256 != null) sha256.Dispose();
                 if (fs != null) fs.Dispose();
             }
-
-            return finAckReceived;
         }
 
         private async Task<bool> WaitForAckAsync()
@@ -421,7 +443,7 @@ namespace TrFileTransfer
             {
                 while (true)
                 {
-                    var result = await _udp.ReceiveAsync();
+                    var result = await _udp.ReceiveAsync().ConfigureAwait(false);
                     byte ackType;
                     int ackSeq, ackBodyLen;
                     if (UdpProtocol.ParseHeader(result.Buffer, out ackType, out ackSeq, out ackBodyLen)
@@ -440,6 +462,5 @@ namespace TrFileTransfer
         {
             Utils.LogTo(OnLog, msg);
         }
-
     }
 }

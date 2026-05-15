@@ -48,6 +48,7 @@ namespace TrFileTransfer
         private Button _btnSend;
         private Button _btnCancel;
         private CheckBox _chkFolder;
+        private CheckBox _chkMonitor;
 
         // Progress
         private GroupBox _gbProgress;
@@ -66,6 +67,11 @@ namespace TrFileTransfer
         private TransferUdpServer _serverUdp;
         private TransferUdpClient _clientUdp;
         private bool _transferActive;
+
+        // Monitor mode
+        private System.Threading.CancellationTokenSource _monitorCts;
+        private System.Collections.Generic.List<string> _monitorQueue = new System.Collections.Generic.List<string>();
+        private readonly object _monitorLock = new object();
 
         /// <summary>Initializes the form, populates NIC list, and applies default language.</summary>
         public MainForm()
@@ -149,6 +155,8 @@ namespace TrFileTransfer
             _btnBrowseFile.Click += BtnBrowseFile_Click;
             _chkFolder = new CheckBox { Location = new Point(350, 28), Width = 95, TextAlign = ContentAlignment.MiddleLeft };
             _chkFolder.CheckedChanged += ChkFolder_CheckedChanged;
+            _chkMonitor = new CheckBox { Location = new Point(70, 85), Width = 100, TextAlign = ContentAlignment.MiddleLeft };
+            _chkMonitor.CheckedChanged += ChkMonitor_CheckedChanged;
             _btnSend = new Button { Location = new Point(455, 24), Width = 110, Height = 30 };
             _btnSend.Click += BtnSend_Click;
             _btnCancel = new Button { Location = new Point(455, 56), Width = 110, Height = 30, Enabled = false };
@@ -161,6 +169,7 @@ namespace TrFileTransfer
             _gbClient.Controls.Add(_txtFile);
             _gbClient.Controls.Add(_btnBrowseFile);
             _gbClient.Controls.Add(_chkFolder);
+            _gbClient.Controls.Add(_chkMonitor);
             _gbClient.Controls.Add(_btnSend);
             _gbClient.Controls.Add(_btnCancel);
 
@@ -214,11 +223,12 @@ namespace TrFileTransfer
             _gbClient.Text = L.ClientSettings;
             _lblServerIp.Text = L.ServerIP;
             _lblPortC.Text = L.Port;
-            _lblFile.Text = _chkFolder.Checked ? L.FolderLabel : L.FileLabel;
+            _lblFile.Text = _chkMonitor.Checked ? L.MonitorLabel : (_chkFolder.Checked ? L.FolderLabel : L.FileLabel);
             _btnBrowseFile.Text = L.Browse;
-            _btnSend.Text = _chkFolder.Checked ? L.SendFolder : L.SendFile;
+            _btnSend.Text = _chkMonitor.Checked ? L.StartMonitor : (_chkFolder.Checked ? L.SendFolder : L.SendFile);
             _btnCancel.Text = L.CancelBtn;
             _chkFolder.Text = L.FolderMode;
+            _chkMonitor.Text = L.MonitorMode;
 
             _gbProgress.Text = L.ProgressGroup;
             if (!_transferActive && _btnStartServer.Enabled)
@@ -288,19 +298,29 @@ namespace TrFileTransfer
 
         private void ChkFolder_CheckedChanged(object sender, EventArgs e)
         {
+            if (_chkMonitor.Checked) return; // Monitor mode overrides folder mode
             bool isFolder = _chkFolder.Checked;
             _lblFile.Text = isFolder ? L.FolderLabel : L.FileLabel;
             _btnSend.Text = isFolder ? L.SendFolder : L.SendFile;
             _txtFile.Text = "";
         }
 
+        private void ChkMonitor_CheckedChanged(object sender, EventArgs e)
+        {
+            bool isMonitor = _chkMonitor.Checked;
+            _lblFile.Text = isMonitor ? L.MonitorLabel : (_chkFolder.Checked ? L.FolderLabel : L.FileLabel);
+            _btnSend.Text = isMonitor ? L.StartMonitor : (_chkFolder.Checked ? L.SendFolder : L.SendFile);
+            _chkFolder.Enabled = !isMonitor;
+            _txtFile.Text = "";
+        }
+
         private void BtnBrowseFile_Click(object sender, EventArgs e)
         {
-            if (_chkFolder.Checked)
+            if (_chkFolder.Checked || _chkMonitor.Checked)
             {
                 using (var dlg = new FolderBrowserDialog())
                 {
-                    dlg.Description = L.BrowseFolderDesc;
+                    dlg.Description = _chkMonitor.Checked ? L.MonitorLabel : L.BrowseFolderDesc;
                     if (dlg.ShowDialog() == DialogResult.OK)
                         _txtFile.Text = dlg.SelectedPath;
                 }
@@ -396,6 +416,23 @@ namespace TrFileTransfer
             _transferActive = false;
         }
 
+        private void DisableClientInputs()
+        {
+            _btnSend.Enabled = false;
+            _btnCancel.Enabled = true;
+            _rbServer.Enabled = false;
+            _rbClient.Enabled = false;
+            _rbTcp.Enabled = false;
+            _rbUdp.Enabled = false;
+            _cmbLang.Enabled = false;
+            _txtServerIp.Enabled = false;
+            _txtPortC.Enabled = false;
+            _txtFile.Enabled = false;
+            _btnBrowseFile.Enabled = false;
+            _chkFolder.Enabled = false;
+            _chkMonitor.Enabled = false;
+        }
+
         private void OnServerStarted()
         {
             _btnStartServer.Enabled = false;
@@ -422,7 +459,35 @@ namespace TrFileTransfer
         {
             string path = _txtFile.Text.Trim();
             bool isFolder = _chkFolder.Checked;
+            bool isMonitor = _chkMonitor.Checked;
 
+            // Validate IP and port (shared)
+            int port;
+            if (!int.TryParse(_txtPortC.Text.Trim(), out port) || port < 1 || port > 65535)
+            {
+                MessageBox.Show(L.InvalidPort, L.DlgError, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            string ip = _txtServerIp.Text.Trim();
+            if (string.IsNullOrWhiteSpace(ip))
+            {
+                MessageBox.Show(L.EnterServerIP, L.DlgError, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            // Monitor mode branch
+            if (isMonitor)
+            {
+                if (!Directory.Exists(path))
+                {
+                    MessageBox.Show(L.MonitorDirNotExist, L.DlgError, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+                StartMonitoring(path, ip, port);
+                return;
+            }
+
+            // Normal send branch
             if (isFolder)
             {
                 if (!Directory.Exists(path))
@@ -440,31 +505,7 @@ namespace TrFileTransfer
                 }
             }
 
-            int port;
-            if (!int.TryParse(_txtPortC.Text.Trim(), out port) || port < 1 || port > 65535)
-            {
-                MessageBox.Show(L.InvalidPort, L.DlgError, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-            string ip = _txtServerIp.Text.Trim();
-            if (string.IsNullOrWhiteSpace(ip))
-            {
-                MessageBox.Show(L.EnterServerIP, L.DlgError, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-
-            _btnSend.Enabled = false;
-            _btnCancel.Enabled = true;
-            _rbServer.Enabled = false;
-            _rbClient.Enabled = false;
-            _rbTcp.Enabled = false;
-            _rbUdp.Enabled = false;
-            _cmbLang.Enabled = false;
-            _txtServerIp.Enabled = false;
-            _txtPortC.Enabled = false;
-            _txtFile.Enabled = false;
-            _btnBrowseFile.Enabled = false;
-            _chkFolder.Enabled = false;
+            DisableClientInputs();
             _transferActive = true;
 
             if (_rbTcp.Checked)
@@ -517,6 +558,11 @@ namespace TrFileTransfer
 
         private void BtnCancel_Click(object sender, EventArgs e)
         {
+            if (_monitorCts != null)
+            {
+                StopMonitoring();
+                return;
+            }
             if (_client != null)
                 _client.Cancel();
             if (_clientUdp != null)
@@ -541,6 +587,7 @@ namespace TrFileTransfer
             _txtFile.Enabled = true;
             _btnBrowseFile.Enabled = true;
             _chkFolder.Enabled = true;
+            _chkMonitor.Enabled = true;
         }
 
         private void UpdateProgress(TransferProgress p)
@@ -587,9 +634,191 @@ namespace TrFileTransfer
                 _lstLog.Items.RemoveAt(0);
         }
 
+        // ---- Monitor mode ----
+
+        private void StartMonitoring(string folderPath, string ip, int port)
+        {
+            _monitorCts = new System.Threading.CancellationTokenSource();
+
+            DisableClientInputs();
+            _lblStatus.Text = L.MonitorWaiting;
+            AddLog(L.MonitorStarted(folderPath));
+
+            string sentDir = Path.Combine(folderPath, "已发送文件");
+            Directory.CreateDirectory(sentDir);
+
+            System.Threading.Tasks.Task.Run(() => MonitorLoop(folderPath, ip, port, sentDir, _monitorCts.Token));
+        }
+
+        private void StopMonitoring()
+        {
+            if (_monitorCts != null)
+            {
+                try { _monitorCts.Cancel(); } catch { }
+            }
+            _btnCancel.Enabled = false;
+            _lblStatus.Text = L.MonitorStopped;
+            AddLog(L.MonitorLogStopped);
+            ResetClientUI();
+        }
+
+        private async System.Threading.Tasks.Task MonitorLoop(string folderPath, string ip, int port, string sentDir, System.Threading.CancellationToken ct)
+        {
+            using (var watcher = new FileSystemWatcher(folderPath))
+            {
+                watcher.NotifyFilter = NotifyFilters.FileName;
+                watcher.Created += (s, e) =>
+                {
+                    lock (_monitorLock) { _monitorQueue.Add(e.FullPath); }
+                };
+                watcher.EnableRaisingEvents = true;
+
+                while (!ct.IsCancellationRequested)
+                {
+                    string filePath = null;
+                    lock (_monitorLock)
+                    {
+                        if (_monitorQueue.Count > 0)
+                        {
+                            filePath = _monitorQueue[0];
+                            _monitorQueue.RemoveAt(0);
+                        }
+                    }
+
+                    if (filePath != null)
+                    {
+                        await ProcessMonitoredFile(filePath, ip, port, sentDir, ct);
+                    }
+                    else
+                    {
+                        await System.Threading.Tasks.Task.Delay(500, ct);
+                    }
+                }
+            }
+        }
+
+        private async System.Threading.Tasks.Task ProcessMonitoredFile(string filePath, string ip, int port, string sentDir, System.Threading.CancellationToken ct)
+        {
+            string fileName = Path.GetFileName(filePath);
+
+            if (!await WaitForFileReady(filePath, ct))
+            {
+                this.Invoke((Action)(() =>
+                    AddLog(L.MonitorFileNotReady(fileName))));
+                lock (_monitorLock) { _monitorQueue.Add(filePath); }
+                return;
+            }
+
+            bool success = false;
+            try
+            {
+                var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>();
+
+                if (_rbTcp.Checked)
+                {
+                    var client = new TransferClient(ip, port, filePath);
+                    client.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
+                    client.OnProgress += p => this.Invoke((Action)(() => UpdateProgress(p)));
+                    client.OnError += msg => this.Invoke((Action)(() => AddLog(L.MonitorFileSendFailed(fileName, msg))));
+                    client.OnTransferComplete += () => tcs.TrySetResult(true);
+                    client.OnStopped += () => tcs.TrySetResult(false);
+                    await client.SendAsync();
+                }
+                else
+                {
+                    var clientUdp = new TransferUdpClient(ip, port, filePath);
+                    clientUdp.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
+                    clientUdp.OnProgress += p => this.Invoke((Action)(() => UpdateProgress(p)));
+                    clientUdp.OnError += msg => this.Invoke((Action)(() => AddLog(L.MonitorFileSendFailed(fileName, msg))));
+                    clientUdp.OnTransferComplete += () => tcs.TrySetResult(true);
+                    clientUdp.OnStopped += () => tcs.TrySetResult(false);
+                    await clientUdp.SendAsync();
+                }
+
+                success = await tcs.Task;
+            }
+            catch (Exception ex)
+            {
+                this.Invoke((Action)(() =>
+                    AddLog(L.MonitorFileSendFailed(fileName, ex.Message))));
+            }
+
+            if (success)
+            {
+                string destPath = Utils.GetUniqueSavePath(sentDir, fileName);
+                try { File.Move(filePath, destPath); } catch { }
+                this.Invoke((Action)(() =>
+                {
+                    AddLog(L.MonitorFileSent(fileName));
+                    _lblStatus.Text = L.MonitorWaiting;
+                }));
+            }
+        }
+
+        private async System.Threading.Tasks.Task<bool> WaitForFileReady(string filePath, System.Threading.CancellationToken ct)
+        {
+            int stableCount = 0;
+            long lastSize = -1;
+            int totalWaited = 0;
+            const int PollIntervalMs = 500;
+            const int StableThreshold = 2;
+            const int RequeueAfterMs = 120000;
+            const int LogIntervalMs = 30000;
+            int lastLogAt = 0;
+            var fileInfo = new FileInfo(filePath);
+
+            while (!ct.IsCancellationRequested)
+            {
+                long currentSize;
+                try
+                {
+                    fileInfo.Refresh();
+                    if (!fileInfo.Exists)
+                        return false;
+                    currentSize = fileInfo.Length;
+                }
+                catch
+                {
+                    return false;
+                }
+
+                if (currentSize == lastSize)
+                {
+                    stableCount++;
+                    if (stableCount >= StableThreshold)
+                        return true;
+                }
+                else
+                {
+                    stableCount = 0;
+                    lastSize = currentSize;
+                }
+
+                if (totalWaited >= RequeueAfterMs)
+                    return false;
+
+                if (totalWaited - lastLogAt >= LogIntervalMs)
+                {
+                    lastLogAt = totalWaited;
+                    string fileName = Path.GetFileName(filePath);
+                    this.Invoke((Action)(() =>
+                        AddLog(L.MonitorFileWaiting(fileName, totalWaited / 1000))));
+                }
+
+                await System.Threading.Tasks.Task.Delay(PollIntervalMs, ct);
+                totalWaited += PollIntervalMs;
+            }
+
+            return false;
+        }
+
         /// <summary>Stops any active transfer before closing the window.</summary>
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            if (_monitorCts != null)
+            {
+                try { _monitorCts.Cancel(); } catch { }
+            }
             if (_server != null)
                 _server.Stop();
             if (_serverUdp != null)

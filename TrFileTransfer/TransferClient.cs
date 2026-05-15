@@ -71,7 +71,7 @@ namespace TrFileTransfer
 
             try
             {
-                await transferAction(_cts.Token);
+                await transferAction(_cts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -134,6 +134,9 @@ namespace TrFileTransfer
                 Log(L.C_TransferDone(fileName, Utils.FormatSize(fileSize),
                     sw.Elapsed.TotalSeconds,
                     Utils.FormatSize((long)(fileSize / Math.Max(sw.Elapsed.TotalSeconds, 0.001)))));
+
+                var completeHandler = OnTransferComplete;
+                if (completeHandler != null) completeHandler();
             }
         }
 
