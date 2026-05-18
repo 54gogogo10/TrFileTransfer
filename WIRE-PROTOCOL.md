@@ -1,133 +1,133 @@
-# TrFileTransfer — Wire Protocol Specification
+# TrFileTransfer — 线协议规范
 
-## TCP Protocol
+## TCP 协议
 
-Both single-file and folder transfers begin with a single type byte.
+单文件和文件夹传输都以单个类型字节开始。
 
-### Single File (type `0x00`)
-
-```
-Offset  Size  Field
-------  ----  -----
-0       1     Type = 0x00
-1       8     File size, Int64 LE
-9       4     File name length (bytes), Int32 LE
-13      N     File name, UTF-8
-13+N    M     File content (fileSize bytes)
-13+N+M  32    SHA-256 hash of file content
-```
-
-### Folder (type `0x01`)
+### 单文件（类型 `0x00`）
 
 ```
-Offset  Size  Field
-------  ----  -----
-0       1     Type = 0x01
-1       2     Folder name length (bytes), Int16 LE
-3       N     Folder name, UTF-8
-3+N     4     File count, Int32 LE
+偏移  大小  字段
+----  ----  -----
+0     1     类型 = 0x00
+1     8     文件大小，Int64 小端序
+9     4     文件名长度（字节），Int32 小端序
+13    N     文件名，UTF-8
+13+N  M     文件内容（fileSize 字节）
+13+N+M 32  文件内容 SHA-256 哈希
 ```
 
-Immediately followed by each file entry:
+### 文件夹（类型 `0x01`）
 
 ```
-Offset  Size  Field
-------  ----  -----
-0       8     File size, Int64 LE
-8       2     Relative path length (bytes), Int16 LE
-10      N     Relative path, UTF-8 (e.g. "subdir/file.txt")
-10+N    M     File content (fileSize bytes)
-10+N+M  32    SHA-256 hash of this file's content
+偏移  大小  字段
+----  ----  -----
+0     1     类型 = 0x01
+1     2     文件夹名长度（字节），Int16 小端序
+3     N     文件夹名，UTF-8
+3+N   4     文件数量，Int32 小端序
 ```
 
-All multi-byte integers are little-endian.
+紧接着是每个文件的条目：
 
-### Server Behaviour
+```
+偏移  大小  字段
+----  ----  -----
+0     8     文件大小，Int64 小端序
+8     2     相对路径长度（字节），Int16 小端序
+10    N     相对路径，UTF-8（如 "subdir/file.txt"）
+10+N  M     文件内容（fileSize 字节）
+10+N+M 32  此文件内容 SHA-256 哈希
+```
 
-- File names are sanitized with `Path.GetFileName()`; relative paths from
-  folder transfers go through `SanitizeRelativePath` (replaces `..` / `.`).
-- Name collisions append `_1`, `_2`, ... before the extension.
-- If any file's SHA-256 fails, the entire folder transfer is aborted.
+所有多字节整数均为小端序。
+
+### 服务器行为
+
+- 文件名通过 `Path.GetFileName()` 清理；文件夹传输的相对路径通过 `SanitizeRelativePath` 处理（替换 `..` / `.`）。
+- 名称冲突时在扩展名前追加 `_1`、`_2` 等。
+- 任何文件 SHA-256 不匹配，整个文件夹传输中止。
 
 ---
 
-## UDP Protocol
+## UDP 协议
 
-### Packet Format (fixed 14-byte header)
-
-```
-Offset  Size  Field
-------  ----  -----
-0       4     Magic = 0x55445054 ("UDPT")
-4       1     Type (see below)
-5       1     Reserved (always 0)
-6       4     Sequence number, Int32 LE
-10      4     Body length, Int32 LE
-14      N     Body (bodyLen bytes)
-```
-
-### Packet Types
-
-| Type | Value | Body | Purpose |
-|------|-------|------|---------|
-| HELLO     | 0 | transferType(1) + fileSize(8) + nameLen(2) + fileName(N) | Initiate a file |
-| DATA      | 1 | file chunk (≤ 32768 bytes) | File payload |
-| ACK       | 2 | empty | Cumulative ack (highest consecutive seq received) |
-| FIN       | 3 | SHA-256 hash (32 bytes) | End-of-file + integrity |
-| FIN\_ACK  | 4 | empty | Server confirms hash match |
-| FOLDER\_END | 5 | empty | Folder transfer complete |
-
-HELLO body `transferType`: `0x00` = single file (server applies `Path.GetFileName`),
-`0x01` = folder file (server preserves relative path, creates subdirectories).
-
-### Flow — Single File
+### 包格式（固定 14 字节头部）
 
 ```
-Client                          Server
+偏移  大小  字段
+----  ----  -----
+0     4     魔数 = 0x55445054（"UDPT"）
+4     1     类型（见下表）
+5     1     保留（始终为 0）
+6     4     序号，Int32 小端序
+10    4     正文长度，Int32 小端序
+14    N     正文（bodyLen 字节）
+```
+
+### 包类型
+
+| 类型 | 值 | 正文 | 用途 |
+|------|-----|------|------|
+| HELLO     | 0 | transferType(1) + fileSize(8) + nameLen(2) + fileName(N) | 发起文件传输 |
+| DATA      | 1 | 文件块（≤ 4096 字节） | 文件载荷 |
+| ACK       | 2 | 空 | 累计确认（最高连续收到的 seq） |
+| FIN       | 3 | SHA-256 哈希（32 字节） | 文件结束 + 完整性 |
+| FIN\_ACK  | 4 | 空 | 服务器确认哈希匹配 |
+| FOLDER\_END | 5 | 空 | 文件夹传输完成 |
+| NAK       | 6 | 空 | seq = 缺失块号，客户端选择性重传该块 |
+
+HELLO 正文 `transferType`：`0x00` = 单文件（服务器应用 `Path.GetFileName`），
+`0x01` = 文件夹文件（服务器保留相对路径，创建子目录）。
+
+### 流程 — 单文件
+
+```
+客户端                          服务器
   |                               |
   |--- HELLO(seq=0) ------------>|
-  |                               |  Send HELLO_ACK (regular ACK, seq=0)
+  |                               |  发送 HELLO_ACK（常规 ACK，seq=0）
   |<-- ACK(seq=0) ---------------|
   |                               |
   |--- DATA[0]  ---------------->|
   |--- DATA[1]  ---------------->|
-  |       ... (sliding window)    |
+  |       ...（滑动窗口）           |
   |--- DATA[N]  ---------------->|
-  |<-- ACK(seq=K) ---------------|  (cumulative, sent per in-order chunk)
+  |<-- ACK(seq=K) ---------------|  （累计，批量每窗或 50ms 定时器）
   |       ...                     |
   |                               |
   |--- FIN(sha256) ------------->|
-  |                               |  Verify hash; FIN_ACK or FIN
+  |                               |  验证哈希；落盘后发送 FIN_ACK 或 FIN
   |<-- FIN_ACK ------------------|
 ```
 
-### Flow — Folder Transfer
+### 流程 — 文件夹传输
 
-Each file in the folder is sent as an independent HELLO → DATA… → FIN → FIN\_ACK
-cycle with `transferType=0x01` and the relative path (prepended with source folder
-name, e.g. `"MyFolder\subdir\file.txt"`). After the last file, the client sends a
-single FOLDER\_END packet; the server responds with ACK(seq=0) and fires
-`OnTransferComplete`.
+文件夹中每个文件以独立的 HELLO → DATA… → FIN → FIN\_ACK 周期发送，
+使用 `transferType=0x01`，相对路径（前缀为源文件夹名，如 `"MyFolder\subdir\file.txt"`）。
+最后一个文件发送后，客户端发送单个 FOLDER\_END 包；服务器回复 ACK(seq=0)
+并触发 `OnTransferComplete`。
 
-### Go-Back-N ARQ Parameters
+### Go-Back-N ARQ 参数
 
-| Parameter | Value |
-|-----------|-------|
-| Window size | 32 chunks |
-| Chunk size | 32 KB (max) |
-| Retransmit timeout | 3 s |
-| Max retransmits | 15 |
-| FIN retries | 5 |
-| Socket buffers | 4 MB (send & recv) |
+| 参数 | 值 |
+|------|-----|
+| 窗口大小 | 512 块 |
+| 块大小 | 4096 字节（~3 IP 分片，避免 32KB 分片爆炸） |
+| 重传超时 | 初始 3 秒，动态收敛至 max(4×RTT, 500ms) |
+| 最大重传次数 | 15 |
+| FIN 重试次数 | 5 |
+| 套接字缓冲区 | 4 MB（发送 & 接收） |
 
-The client sends up to 32 DATA packets in a burst, then waits for a cumulative ACK.
-The server only acknowledges in-order chunks. Any gap or timeout triggers Go-Back-N
-retransmission from the last acknowledged sequence number.
+客户端批量发送整窗（`Task.WhenAll`），服务端批量 ACK（每窗或 50ms）。 
+服务端检测到缺口（3 次乱序到达）时发送 NAK，客户端选择性重传缺失块（非 Go-Back-N）。
+超时重传仍使用 Go-Back-N。
+
+客户端以 1 MB 缓冲读取文件切片为块；服务端以 2 MB 缓冲写入，满窗刷新到磁盘。
 
 ---
 
-## SHA-256 Integrity
+## SHA-256 完整性
 
-Both protocols append a 32-byte SHA-256 hash of the file content after the data
-payload. The hash is computed incrementally during transfer (streaming). Comparison
-uses a constant-time XOR loop to resist timing side-channels.
+两种协议都在数据载荷后追加 32 字节文件内容 SHA-256 哈希。
+哈希在传输过程中增量计算（流式）。比较使用恒定时间 XOR 循环以防止时序侧信道攻击。
