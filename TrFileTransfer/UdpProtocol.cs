@@ -11,10 +11,12 @@ namespace TrFileTransfer
         public const int HeaderSize = 14;
         /// <summary>Maximum payload per data chunk (1400 bytes — fits in a single Ethernet frame without IP fragmentation).</summary>
         public const int MaxChunkSize = 1400;
-        /// <summary>Default sliding window size in chunks (256 × 1400 = 358 KB per window).</summary>
-        public const int DefaultWindowSize = 256;
-        /// <summary>Receive timeout in milliseconds.</summary>
+        /// <summary>Default sliding window size in chunks (1024 × 1400 = 1.4 MB per window).</summary>
+        public const int DefaultWindowSize = 1024;
+        /// <summary>Default receive timeout in milliseconds (fallback before RTT measurement).</summary>
         public const int TimeoutMs = 3000;
+        /// <summary>Minimum receive timeout in milliseconds (floor for dynamic RTT-based timeout).</summary>
+        public const int MinTimeoutMs = 500;
         /// <summary>Maximum consecutive timeouts before aborting.</summary>
         public const int MaxRetries = 15;
 

@@ -255,12 +255,17 @@ namespace TrFileTransfer
                 int nextSeqNum = 0;
                 int timeoutCount = 0;
                 long filePos = 0;
+                double rttSmooth = UdpProtocol.TimeoutMs / 4.0; // initial RTT guess: 750ms
+                int dynTimeout = UdpProtocol.TimeoutMs;          // current dynamic timeout
+                var windowSendTime = DateTime.MinValue;          // time when last window send completed
+                bool canMeasureRtt = false;                      // true when we have a fresh send time
 
                 while (true)
                 {
                     // --- Data phase: send chunks within window, receive ACKs ---
                     while (sendBase < totalChunks && !ct.IsCancellationRequested)
                     {
+                        bool sentNewChunks = false;
                         while (nextSeqNum < sendBase + _windowSize && nextSeqNum < totalChunks)
                         {
                             int offset = nextSeqNum * UdpProtocol.MaxChunkSize;
@@ -290,9 +295,16 @@ namespace TrFileTransfer
                             }
 
                             nextSeqNum++;
+                            sentNewChunks = true;
                         }
 
-                        udp.Client.ReceiveTimeout = UdpProtocol.TimeoutMs;
+                        if (sentNewChunks)
+                        {
+                            windowSendTime = DateTime.UtcNow;
+                            canMeasureRtt = true;
+                            sentNewChunks = false;
+                        }
+                        udp.Client.ReceiveTimeout = dynTimeout;
                         try
                         {
                             var result = await udp.ReceiveAsync().ConfigureAwait(false);
@@ -307,6 +319,16 @@ namespace TrFileTransfer
                                 {
                                     sendBase = seq + 1;
                                     timeoutCount = 0;
+                                    if (canMeasureRtt)
+                                    {
+                                        canMeasureRtt = false;
+                                        double rtt = (DateTime.UtcNow - windowSendTime).TotalMilliseconds;
+                                        if (rtt > 0 && rtt < 10000)
+                                        {
+                                            rttSmooth = rttSmooth * 0.875 + rtt * 0.125;
+                                            dynTimeout = Math.Max((int)(rttSmooth * 4), UdpProtocol.MinTimeoutMs);
+                                        }
+                                    }
                                 }
                             }
                             else if (type == UdpProtocol.TypeNak)
@@ -385,7 +407,7 @@ namespace TrFileTransfer
                         var finPacket = UdpProtocol.BuildPacket(UdpProtocol.TypeFin, 0, fileHash);
                         await udp.SendAsync(finPacket, finPacket.Length, serverEp).ConfigureAwait(false);
 
-                        var deadline = DateTime.UtcNow.AddMilliseconds(UdpProtocol.TimeoutMs);
+                        var deadline = DateTime.UtcNow.AddMilliseconds(dynTimeout);
                         while (DateTime.UtcNow < deadline && !finAckReceived && !needsResend && !ct.IsCancellationRequested)
                         {
                             int remaining = Math.Max((int)(deadline - DateTime.UtcNow).TotalMilliseconds, 1);
