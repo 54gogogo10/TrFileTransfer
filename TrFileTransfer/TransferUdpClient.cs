@@ -254,55 +254,74 @@ namespace TrFileTransfer
                 int sendBase = 0;
                 int nextSeqNum = 0;
                 int timeoutCount = 0;
-                long filePos = 0;
-                double rttSmooth = UdpProtocol.TimeoutMs / 4.0; // initial RTT guess: 750ms
-                int dynTimeout = UdpProtocol.TimeoutMs;          // current dynamic timeout
-                var windowSendTime = DateTime.MinValue;          // time when last window send completed
-                bool canMeasureRtt = false;                      // true when we have a fresh send time
+                double rttSmooth = UdpProtocol.TimeoutMs / 4.0;
+                int dynTimeout = UdpProtocol.TimeoutMs;
+                var windowSendTime = DateTime.MinValue;
+                bool canMeasureRtt = false;
+                const int ReadBufSize = 1048576; // 1 MB — match TCP buffer size
+                byte[] readBuf = new byte[ReadBufSize];
+                int bufStartSeq = -1;
+                int bufDataLen = 0;
+                var retransmitQ = new System.Collections.Generic.Queue<int>();
+                var sendTasks = new System.Collections.Generic.List<System.Threading.Tasks.Task<int>>();
 
                 while (true)
                 {
-                    // --- Data phase: send chunks within window, receive ACKs ---
                     while (sendBase < totalChunks && !ct.IsCancellationRequested)
                     {
-                        bool sentNewChunks = false;
-                        while (nextSeqNum < sendBase + _windowSize && nextSeqNum < totalChunks)
+                        sendTasks.Clear();
+                        while ((retransmitQ.Count > 0 || nextSeqNum < sendBase + _windowSize) && nextSeqNum < totalChunks)
                         {
-                            int offset = nextSeqNum * UdpProtocol.MaxChunkSize;
-                            int chunkSize = (nextSeqNum < totalChunks - 1)
+                            // Selective retransmit: pick from NAK queue first, then new chunks
+                            int currentSeq;
+                            if (retransmitQ.Count > 0)
+                            {
+                                currentSeq = retransmitQ.Dequeue();
+                                if (currentSeq < sendBase) continue; // already ACKed, skip
+                            }
+                            else
+                            {
+                                currentSeq = nextSeqNum;
+                                nextSeqNum++;
+                            }
+                            int offset = currentSeq * UdpProtocol.MaxChunkSize;
+                            int chunkSize = (currentSeq < totalChunks - 1)
                                 ? UdpProtocol.MaxChunkSize
                                 : (int)(fileSize - (long)offset);
 
-                            var chunkData = new byte[chunkSize];
-                            if (offset != filePos)
+                            int bufOff = offset - bufStartSeq * UdpProtocol.MaxChunkSize;
+                            if (bufStartSeq < 0 || bufOff < 0 || bufOff + chunkSize > bufDataLen)
+                            {
                                 fs.Seek(offset, SeekOrigin.Begin);
-                            int totalRead = 0;
-                            while (totalRead < chunkSize)
-                            {
-                                int n = await fs.ReadAsync(chunkData, totalRead, chunkSize - totalRead, ct).ConfigureAwait(false);
-                                if (n == 0) break;
-                                totalRead += n;
-                            }
-                            filePos = offset + totalRead;
-
-                            var dataPacket = UdpProtocol.BuildPacket(UdpProtocol.TypeData, nextSeqNum, chunkData);
-                            await udp.SendAsync(dataPacket, dataPacket.Length, serverEp).ConfigureAwait(false);
-
-                            if (nextSeqNum > hashedUpTo)
-                            {
-                                sha256.TransformBlock(chunkData, 0, chunkSize, null, 0);
-                                hashedUpTo = nextSeqNum;
+                                int toRead = (int)Math.Min(ReadBufSize, fileSize - offset);
+                                int totalRead = 0;
+                                while (totalRead < toRead)
+                                {
+                                    int n = await fs.ReadAsync(readBuf, totalRead, toRead - totalRead, ct).ConfigureAwait(false);
+                                    if (n == 0) break;
+                                    totalRead += n;
+                                }
+                                bufStartSeq = currentSeq;
+                                bufDataLen = totalRead;
+                                bufOff = 0;
                             }
 
-                            nextSeqNum++;
-                            sentNewChunks = true;
+                            var dataPacket = UdpProtocol.BuildPacketFromBuffer(UdpProtocol.TypeData, currentSeq,
+                                readBuf, bufOff, chunkSize);
+                            sendTasks.Add(udp.SendAsync(dataPacket, dataPacket.Length, serverEp));
+
+                            if (currentSeq > hashedUpTo)
+                            {
+                                sha256.TransformBlock(readBuf, bufOff, chunkSize, null, 0);
+                                hashedUpTo = currentSeq;
+                            }
                         }
 
-                        if (sentNewChunks)
+                        if (sendTasks.Count > 0)
                         {
+                            await System.Threading.Tasks.Task.WhenAll(sendTasks.ToArray()).ConfigureAwait(false);
                             windowSendTime = DateTime.UtcNow;
                             canMeasureRtt = true;
-                            sentNewChunks = false;
                         }
                         udp.Client.ReceiveTimeout = dynTimeout;
                         try
@@ -333,9 +352,10 @@ namespace TrFileTransfer
                             }
                             else if (type == UdpProtocol.TypeNak)
                             {
+                                // Selective retransmit: only the NAK'd chunk, not the whole window
                                 if (seq >= sendBase && seq < nextSeqNum)
                                 {
-                                    nextSeqNum = seq;
+                                    retransmitQ.Enqueue(seq);
                                     timeoutCount = 0;
                                 }
                             }

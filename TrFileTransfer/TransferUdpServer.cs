@@ -215,9 +215,16 @@ namespace TrFileTransfer
             int retryCount = 0;
             int lastNakSeq = -1;
             int outOfOrderCount = 0;
+            int unackedSinceLastAck = 0;
+            const int AckBatchCount = 512; // one ACK per full window (512 chunks × 4096B = 2MB)
+            DateTime lastAckTime = DateTime.UtcNow;
             const int NakThreshold = 3; // require 3 out-of-order packets before NAK (like TCP fast retransmit)
             bool interruptedByPacket = false;
             bool finProcessed = false;
+
+            const int WriteBufSize = 2 * 1024 * 1024; // 2 MB — flush once per window
+            byte[] writeBuf = new byte[WriteBufSize];
+            int writeBufPos = 0;
 
             using (var sha256 = SHA256.Create())
             using (var fileStream = new FileStream(savePath, FileMode.Create, FileAccess.Write,
@@ -251,14 +258,18 @@ namespace TrFileTransfer
                                 if (dataLen <= 0) continue;
 
                                 sha256.TransformBlock(result.Buffer, dataOffset, dataLen, null, 0);
-                                await fileStream.WriteAsync(result.Buffer, dataOffset, dataLen, ct).ConfigureAwait(false);
+                                Buffer.BlockCopy(result.Buffer, dataOffset, writeBuf, writeBufPos, dataLen);
+                                writeBufPos += dataLen;
+                                if (writeBufPos + UdpProtocol.MaxChunkSize > WriteBufSize)
+                                {
+                                    await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
+                                    writeBufPos = 0;
+                                }
                                 bytesReceived += dataLen;
                                 expectedSeq++;
-                                lastNakSeq = -1; // gap moved or filled
+                                lastNakSeq = -1;
                                 outOfOrderCount = 0;
-
-                                var ack = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
-                                await _udp.SendAsync(ack, ack.Length, clientEp).ConfigureAwait(false);
+                                unackedSinceLastAck++;
 
                                 if (progressTimer.ElapsedMilliseconds >= 100 || expectedSeq >= totalChunks)
                                 {
@@ -277,10 +288,7 @@ namespace TrFileTransfer
                             }
                             else
                             {
-                                var ack = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
-                                await _udp.SendAsync(ack, ack.Length, clientEp).ConfigureAwait(false);
                                 // Only NAK after NakThreshold out-of-order packets for the same gap
-                                // A single out-of-order packet may just be reordering, not loss
                                 outOfOrderCount++;
                                 if (outOfOrderCount >= NakThreshold
                                     && expectedSeq != lastNakSeq
@@ -294,6 +302,21 @@ namespace TrFileTransfer
                         }
                         else if (type == UdpProtocol.TypeFin)
                         {
+                            // Ensure all data is on disk before processing FIN
+                            if (unackedSinceLastAck > 0)
+                            {
+                                var flushAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
+                                await _udp.SendAsync(flushAck, flushAck.Length, clientEp).ConfigureAwait(false);
+                                unackedSinceLastAck = 0;
+                                lastAckTime = DateTime.UtcNow;
+                            }
+                            if (writeBufPos > 0)
+                            {
+                                await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
+                                writeBufPos = 0;
+                                await fileStream.FlushAsync(ct).ConfigureAwait(false);
+                            }
+
                             if (expectedSeq >= totalChunks)
                             {
                                 sha256.TransformFinalBlock(new byte[0], 0, 0);
@@ -338,7 +361,31 @@ namespace TrFileTransfer
                             Buffer.BlockCopy(result.Buffer, 0, _pendingPacketData, 0, result.Buffer.Length);
                             _pendingPacketEp = result.RemoteEndPoint;
                             interruptedByPacket = true;
+                            // Flush any pending ACK before switching to next transfer
+                            if (unackedSinceLastAck > 0)
+                            {
+                                var flushAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
+                                await _udp.SendAsync(flushAck, flushAck.Length, clientEp).ConfigureAwait(false);
+                                unackedSinceLastAck = 0;
+                            }
+                            if (writeBufPos > 0)
+                            {
+                                await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
+                                writeBufPos = 0;
+                            }
                             break;
+                        }
+
+                        // Batch ACK: send one ACK per AckBatchCount chunks or every 50ms
+                        bool shouldSendAck = (unackedSinceLastAck >= AckBatchCount);
+                        if (!shouldSendAck && unackedSinceLastAck > 0)
+                            shouldSendAck = (DateTime.UtcNow - lastAckTime).TotalMilliseconds >= 50;
+                        if (shouldSendAck)
+                        {
+                            var batchAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
+                            await _udp.SendAsync(batchAck, batchAck.Length, clientEp).ConfigureAwait(false);
+                            unackedSinceLastAck = 0;
+                            lastAckTime = DateTime.UtcNow;
                         }
                     }
                     catch (SocketException)
@@ -349,6 +396,8 @@ namespace TrFileTransfer
                             Log(L.UdpS_DataTimeout);
                             break;
                         }
+                        // Flush pending ACK counter — the ACK resend below will inform the client
+                        unackedSinceLastAck = 0;
                         timedOut = true;
                     }
                     catch (ObjectDisposedException)
@@ -368,6 +417,8 @@ namespace TrFileTransfer
                     }
                 }
 
+                if (writeBufPos > 0)
+                    await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
                 await fileStream.FlushAsync(ct).ConfigureAwait(false);
             }
 

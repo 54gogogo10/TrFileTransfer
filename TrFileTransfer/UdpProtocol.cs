@@ -9,10 +9,10 @@ namespace TrFileTransfer
         public const int Magic = 0x55445054;
         /// <summary>Packet header size: magic(4) + type(1) + reserved(1) + seq(4) + bodyLen(4).</summary>
         public const int HeaderSize = 14;
-        /// <summary>Maximum payload per data chunk (1400 bytes — fits in a single Ethernet frame without IP fragmentation).</summary>
-        public const int MaxChunkSize = 1400;
-        /// <summary>Default sliding window size in chunks (1024 × 1400 = 1.4 MB per window).</summary>
-        public const int DefaultWindowSize = 1024;
+        /// <summary>Maximum payload per data chunk (4096 bytes — ~3 IP fragments, balance of throughput vs loss amplification).</summary>
+        public const int MaxChunkSize = 4096;
+        /// <summary>Default sliding window size in chunks (512 × 4096 = 2 MB per window).</summary>
+        public const int DefaultWindowSize = 512;
         /// <summary>Default receive timeout in milliseconds (fallback before RTT measurement).</summary>
         public const int TimeoutMs = 3000;
         /// <summary>Minimum receive timeout in milliseconds (floor for dynamic RTT-based timeout).</summary>
@@ -38,15 +38,19 @@ namespace TrFileTransfer
         /// <summary>Builds a complete UDP packet with header and optional body.</summary>
         public static byte[] BuildPacket(byte type, int sequence, byte[] body)
         {
-            int bodyLen = body != null ? body.Length : 0;
-            var packet = new byte[HeaderSize + bodyLen];
+            return BuildPacketFromBuffer(type, sequence, body, 0, body != null ? body.Length : 0);
+        }
+
+        /// <summary>Builds a UDP packet with body data sourced from a buffer at offset (avoids intermediate copy).</summary>
+        public static byte[] BuildPacketFromBuffer(byte type, int sequence, byte[] source, int sourceOffset, int sourceLen)
+        {
+            var packet = new byte[HeaderSize + sourceLen];
             Buffer.BlockCopy(BitConverter.GetBytes(Magic), 0, packet, 0, 4);
             packet[4] = type;
-            packet[5] = 0; // reserved
+            packet[5] = 0;
             Buffer.BlockCopy(BitConverter.GetBytes(sequence), 0, packet, 6, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(bodyLen), 0, packet, 10, 4);
-            if (body != null)
-                Buffer.BlockCopy(body, 0, packet, HeaderSize, bodyLen);
+            Buffer.BlockCopy(BitConverter.GetBytes(sourceLen), 0, packet, 10, 4);
+            Buffer.BlockCopy(source, sourceOffset, packet, HeaderSize, sourceLen);
             return packet;
         }
 
