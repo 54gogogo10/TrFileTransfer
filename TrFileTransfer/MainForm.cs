@@ -77,9 +77,11 @@ namespace TrFileTransfer
         public MainForm()
         {
             InitializeComponent();
+            Config.Load();
             PopulateBindAddresses();
             ApplyLanguage();
             UpdateModeUI();
+            ApplyConfig();
         }
 
         private void InitializeComponent()
@@ -238,6 +240,51 @@ namespace TrFileTransfer
             _gbLog.Text = L.LogGroup;
 
             PopulateBindAddresses();
+        }
+
+        private void ApplyConfig()
+        {
+            // Language
+            _cmbLang.SelectedIndex = Config.Get("Language", "English") == "中文" ? 1 : 0;
+
+            // Protocol
+            string proto = Config.Get("Protocol", "TCP");
+            _rbTcp.Checked = proto != "UDP";
+            _rbUdp.Checked = proto == "UDP";
+
+            // Server
+            _txtPortS.Text = Config.Get("ServerPort", "8080");
+            _txtSaveDir.Text = Config.Get("SaveDir", Environment.GetFolderPath(Environment.SpecialFolder.Desktop));
+            string bind = Config.Get("ServerBind", "");
+            if (!string.IsNullOrWhiteSpace(bind))
+            {
+                for (int i = 0; i < _cmbBind.Items.Count; i++)
+                {
+                    if (_cmbBind.Items[i].ToString() == bind) { _cmbBind.SelectedIndex = i; break; }
+                }
+            }
+
+            // Client
+            _txtServerIp.Text = Config.Get("ClientIP", "127.0.0.1");
+            _txtPortC.Text = Config.Get("ClientPort", "8080");
+            _txtFile.Text = Config.Get("LastPath", "");
+            _chkFolder.Checked = Config.GetBool("FolderMode", false);
+            _chkMonitor.Checked = Config.GetBool("MonitorMode", false);
+        }
+
+        private void SaveConfig()
+        {
+            Config.Set("Language", _cmbLang.SelectedIndex == 1 ? "中文" : "English");
+            Config.Set("Protocol", _rbUdp.Checked ? "UDP" : "TCP");
+            Config.Set("ServerPort", _txtPortS.Text.Trim());
+            Config.Set("SaveDir", _txtSaveDir.Text.Trim());
+            Config.Set("ServerBind", _cmbBind.SelectedItem != null ? _cmbBind.SelectedItem.ToString() : "");
+            Config.Set("ClientIP", _txtServerIp.Text.Trim());
+            Config.Set("ClientPort", _txtPortC.Text.Trim());
+            Config.Set("LastPath", _txtFile.Text.Trim());
+            Config.SetBool("FolderMode", _chkFolder.Checked);
+            Config.SetBool("MonitorMode", _chkMonitor.Checked);
+            Config.Save();
         }
 
         private void UpdateModeUI()
@@ -815,6 +862,7 @@ namespace TrFileTransfer
         /// <summary>Stops any active transfer before closing the window.</summary>
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            SaveConfig();
             if (_monitorCts != null)
             {
                 try { _monitorCts.Cancel(); } catch { }

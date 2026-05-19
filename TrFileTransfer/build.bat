@@ -25,6 +25,7 @@ echo.
     /reference:"%FRAMEWORK%\System.Drawing.dll" ^
     /optimize+ ^
     /doc:TrFileTransfer.xml ^
+    Config.cs ^
     Shared.cs ^
     L10N.cs ^
     UdpProtocol.cs ^

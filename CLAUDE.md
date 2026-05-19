@@ -15,7 +15,7 @@ build.bat
 
 ## 架构
 
-九个源文件编译为单个 WinForms exe：
+十个源文件编译为单个 WinForms exe：
 
 - **Program.cs** — 入口。`[STAThread]` Main 启动 `MainForm`。
 - **MainForm.cs** — GUI。模式选择（服务器/客户端）、协议选择（TCP/UDP）、服务器绑定地址下拉框（从活动网卡获取）、文件夹模式复选框（仅客户端）、进度条、速度/ETA 显示、滚动日志。所有 UI 由代码构建（无设计器）。右上角语言下拉框。日志上限 500 条，进度事件节流约 100ms。事件绑定抽取到 `WireClientEvents`/`WireUdpClientEvents` 辅助方法。服务器完成传输后 UI 保持"监听中..."状态（不重新启用所有输入控件）——服务器仍在运行并接受新传输。`ResetClientUI` 重置客户端控件和状态文本为"就绪"。**监控模式**：`_chkMonitor` 复选框启用文件夹监控——`FileSystemWatcher` 检测新文件，等待文件稳定（连续 2 次 500ms 轮询文件大小不变），通过 TCP 或 UDP 发送，成功后移入"已发送文件"子目录。2 分钟内未稳定的文件移到队列末尾。使用 `TaskCompletionSource<bool>` 跟踪每个文件的完成状态而不重置 UI。详见下方"监控模式"章节。
@@ -24,6 +24,7 @@ build.bat
 - **TransferUdpServer.cs** — 可靠 UDP 服务器。始终监听所有接口（无绑定地址参数——与 TCP 服务器不同，构造函数只接受 `port` 和 `saveDirectory`）。`HandleTransfer` 解析 HELLO 正文类型字节：`0x00` = 单文件（清理文件名），`0x01` = 文件夹文件（保留相对路径，通过 `Utils.SanitizeRelativePath` 创建子目录）。Go-Back-N ARQ。内部接收循环运行直到 FIN 被处理（不仅是所有数据块到达），确保哈希验证完成且 FIN_ACK 已发送才返回。如果在循环中收到新的 HELLO 或 FolderEnd 包，保存到 `_pendingPacketData`/`_pendingPacketEp`，由 `ReceiveLoop` 在下一次迭代时处理——不会静默丢弃任何包。4 MB 套接字缓冲区。关键行为：(a) `retryCount` 在收到**任何**数据包时重置（有序或乱序均可），而不仅是有序；(b) 接收超时时重新发送最后一个累计 ACK，帮助客户端从 ACK 丢失中恢复；(c) 如果 FIN 在数据未收齐时到达，发送 ACK(last received) 而非忽略——告知客户端从何处重传。服务器使用 2 MB 写缓冲（每窗口刷新一次，而非每块）和批量 ACK（每 512 块或 50ms 定时器发送一次 ACK），最小化异步 I/O 调用。数据在 FIN_ACK 前刷新到磁盘以确保安全。
 - **TransferUdpClient.cs** — 可靠 UDP 客户端。`SendAsync()` 发送单文件，`SendFolderAsync()` 发送文件夹。两者委托到共享的 `RunUdpTransfer` 包装器。使用滑动窗口（512 块 × 4096 字节 = 2 MB 窗口）、超时重传、丢包时 Go-Back-N。`WaitForAckAsync()` 清空过期非 ACK 包，收到 ACK(seq=0) 后返回。`SendUdpFileDataAsync()` 通过 `Task.WhenAll` 异步发送整个窗口（批量发送，每窗 1 次 await）。1 MB 读缓冲区批量读取文件 I/O。NAK 触发的重传是选择性的（单个块入队，非整个窗口 Go-Back-N）；超时仍触发 Go-Back-N。SHA256 哈希计算一次并在重传中复用。`reportProgress` 参数在文件夹传输时抑制每个文件的进度事件。`CreateUdpClient()` 辅助方法消除 UdpClient 设置重复。所有异步方法使用 `ConfigureAwait(false)` 避免 UI 线程饥饿。
 - **UdpProtocol.cs** — 共享的 UDP 线协议常量和辅助方法。此处定义包格式和类型。`BuildPacketFromBuffer` 从源缓冲区+偏移直接构建包，避免中间正文拷贝；`BuildPacket` 委托给它。
+- **Config.cs** — 键值配置持久化。保存/加载到 `%AppData%\TrFileTransfer\config.ini`。`Get`/`GetInt`/`GetBool`/`Set`/`SetInt`/`SetBool` 辅助方法。启动时加载，关闭时保存。
 - **Shared.cs** — `TransferProgress` 类、`Utils` 静态辅助方法（`FormatSize`、`ConstantTimeEquals`、`LogTo`、`SanitizeRelativePath`、`GetUniqueSavePath`）。四个传输文件通用，避免重复。
 - **L10N.cs** — 本地化字符串。静态 `L` 类根据 `L.IsChinese` 返回英文或中文文本。命名规则见下方"本地化约定"。
 
