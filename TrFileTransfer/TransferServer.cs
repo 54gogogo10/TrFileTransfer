@@ -31,6 +31,12 @@ namespace TrFileTransfer
         public event Action OnStarted;
         /// <summary>Fired when the server stops.</summary>
         public event Action OnStopped;
+        /// <summary>Fired when a new client connects (with endpoint for per-client tracking).</summary>
+        public event Action<IPEndPoint> OnClientConnected;
+        /// <summary>Fired periodically during a client's transfer with endpoint.</summary>
+        public event Action<IPEndPoint, TransferProgress> OnClientProgress;
+        /// <summary>Fired when a single client's transfer completes.</summary>
+        public event Action<IPEndPoint> OnClientTransferComplete;
 
         /// <summary>Whether the server is currently listening.</summary>
         public bool IsRunning { get { return _isRunning; } }
@@ -115,8 +121,9 @@ namespace TrFileTransfer
                     client.NoDelay = true;
                     client.SendBufferSize = _bufferSize;
                     client.ReceiveBufferSize = _bufferSize;
-                    Log(L.S_ClientConnected(client.Client.RemoteEndPoint));
-                    await HandleClient(client, ct);
+                    var clientEp = client.Client.RemoteEndPoint as IPEndPoint;
+                    Log(L.S_ClientConnected(clientEp));
+                    var _ = HandleClient(client, ct, clientEp);
                 }
                 catch (ObjectDisposedException) { break; }
                 catch (InvalidOperationException) { break; }
@@ -134,8 +141,22 @@ namespace TrFileTransfer
             }
         }
 
-        private async Task HandleClient(TcpClient client, CancellationToken ct)
+        private async Task HandleClient(TcpClient client, CancellationToken ct, IPEndPoint clientEp)
         {
+            var connectedHandler = OnClientConnected;
+            if (connectedHandler != null) connectedHandler(clientEp);
+
+            Action<TransferProgress> clientProgress = p =>
+            {
+                var ch = OnClientProgress; if (ch != null) ch(clientEp, p);
+            };
+            Action clientComplete = () =>
+            {
+                var ch = OnClientTransferComplete; if (ch != null) ch(clientEp);
+            };
+            OnProgress += clientProgress;
+            OnTransferComplete += clientComplete;
+
             using (client)
             {
                 try
@@ -169,6 +190,11 @@ namespace TrFileTransfer
                     Log(L.S_UnexpectedError(ex.Message));
                     var handler = OnError;
                     if (handler != null) handler(ex.Message);
+                }
+                finally
+                {
+                    OnProgress -= clientProgress;
+                    OnTransferComplete -= clientComplete;
                 }
             }
         }

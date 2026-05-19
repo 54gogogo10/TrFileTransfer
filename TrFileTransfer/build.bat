@@ -30,6 +30,7 @@ echo.
     L10N.cs ^
     UdpProtocol.cs ^
     TransferServer.cs ^
+    TransferUdpSession.cs ^
     TransferUdpServer.cs ^
     TransferClient.cs ^
     TransferUdpClient.cs ^

@@ -1,14 +1,15 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
-using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace TrFileTransfer
 {
-    /// <summary>Reliable UDP file/folder receiver (Go-Back-N ARQ, SHA256 verification).</summary>
+    /// <summary>Reliable UDP file/folder receiver — handles multiple concurrent clients.</summary>
+    #pragma warning disable 1591
     public class TransferUdpServer
     {
         private UdpClient _udp;
@@ -16,19 +17,13 @@ namespace TrFileTransfer
         private readonly int _port;
         private readonly string _saveDirectory;
         private volatile bool _isRunning;
-
-        // For passing a packet (HELLO or FolderEnd) captured inside HandleTransfer back to ReceiveLoop
-        private byte[] _pendingPacketData;
-        private IPEndPoint _pendingPacketEp;
+        private readonly Dictionary<IPEndPoint, TransferUdpSession> _sessions = new Dictionary<IPEndPoint, TransferUdpSession>();
+        private readonly object _sessionsLock = new object();
 
         /// <summary>Fired for every log message.</summary>
         public event Action<string> OnLog;
-        /// <summary>Fired periodically during transfer with progress info.</summary>
-        public event Action<TransferProgress> OnProgress;
-        /// <summary>Fired when a non-fatal error occurs.</summary>
-        public event Action<string> OnError;
-        /// <summary>Fired when a single transfer completes. Server keeps listening.</summary>
-        public event Action OnTransferComplete;
+        /// <summary>Fired when a new transfer starts. The TransferUdpSession has its own OnProgress etc.</summary>
+        public event Action<TransferUdpSession> OnSessionStarted;
         /// <summary>Fired when the server starts listening.</summary>
         public event Action OnStarted;
         /// <summary>Fired when the server stops.</summary>
@@ -37,18 +32,12 @@ namespace TrFileTransfer
         /// <summary>Whether the server is currently listening.</summary>
         public bool IsRunning { get { return _isRunning; } }
 
-        /// <summary>
-        /// Creates a UDP server that listens on all interfaces for incoming transfers.
-        /// </summary>
-        /// <param name="port">Port to listen on.</param>
-        /// <param name="saveDirectory">Directory where received files are saved.</param>
         public TransferUdpServer(int port, string saveDirectory)
         {
             _port = port;
             _saveDirectory = saveDirectory;
         }
 
-        /// <summary>Starts listening on the configured port. Fires OnStarted on success.</summary>
         public void Start()
         {
             _cts = new CancellationTokenSource();
@@ -63,8 +52,7 @@ namespace TrFileTransfer
             catch (SocketException ex)
             {
                 Log(L.S_BindFailed("0.0.0.0", _port.ToString(), ex.Message));
-                var errHandler = OnError;
-                if (errHandler != null) errHandler(ex.Message);
+                var errHandler = OnStarted; // fire OnStopped on bind fail
                 var stoppedHandler = OnStopped;
                 if (stoppedHandler != null) stoppedHandler();
                 return;
@@ -79,7 +67,6 @@ namespace TrFileTransfer
                 TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
 
-        /// <summary>Stops the server and closes the UDP socket.</summary>
         public void Stop()
         {
             _isRunning = false;
@@ -91,6 +78,14 @@ namespace TrFileTransfer
                 if (udp != null) udp.Close();
             }
             catch { }
+            List<TransferUdpSession> sessionsToStop;
+            lock (_sessionsLock)
+            {
+                sessionsToStop = new List<TransferUdpSession>(_sessions.Values);
+                _sessions.Clear();
+            }
+            foreach (var s in sessionsToStop)
+                s.Stop();
             var handler = OnStopped;
             if (handler != null) handler();
             Log(L.UdpS_Stopped);
@@ -100,34 +95,6 @@ namespace TrFileTransfer
         {
             while (!ct.IsCancellationRequested)
             {
-                // Process a pending packet captured inside HandleTransfer
-                if (_pendingPacketData != null)
-                {
-                    var savedData = _pendingPacketData;
-                    var savedEp = _pendingPacketEp;
-                    _pendingPacketData = null;
-                    _pendingPacketEp = null;
-
-                    byte pendingType; int pendingSeq, pendingBodyLen;
-                    if (UdpProtocol.ParseHeader(savedData, out pendingType, out pendingSeq, out pendingBodyLen))
-                    {
-                        if (pendingType == UdpProtocol.TypeHello)
-                        {
-                            Log(L.UdpS_QueuedHello(savedEp));
-                            await HandleTransfer(savedEp, savedData, ct).ConfigureAwait(false);
-                        }
-                        else if (pendingType == UdpProtocol.TypeFolderEnd)
-                        {
-                            Log(L.UdpS_QueuedFolderEnd);
-                            var ack = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, 0, null);
-                            await _udp.SendAsync(ack, ack.Length, savedEp).ConfigureAwait(false);
-                            var compHandler = OnTransferComplete;
-                            if (compHandler != null) compHandler();
-                        }
-                    }
-                    continue;
-                }
-
                 try
                 {
                     _udp.Client.ReceiveTimeout = -1;
@@ -135,20 +102,42 @@ namespace TrFileTransfer
                     var clientEp = result.RemoteEndPoint;
 
                     byte pktType; int pktSeq, pktBodyLen;
-                    if (UdpProtocol.ParseHeader(result.Buffer, out pktType, out pktSeq, out pktBodyLen))
+                    if (!UdpProtocol.ParseHeader(result.Buffer, out pktType, out pktSeq, out pktBodyLen))
+                        continue;
+
+                    if (pktType == UdpProtocol.TypeHello)
                     {
-                        if (pktType == UdpProtocol.TypeHello)
+                        TransferUdpSession session = null;
+                        lock (_sessionsLock)
                         {
-                            Log(L.UdpS_ReceivedHello(clientEp));
-                            await HandleTransfer(clientEp, result.Buffer, ct).ConfigureAwait(false);
+                            if (!_sessions.TryGetValue(clientEp, out session))
+                            {
+                                session = new TransferUdpSession(_udp, clientEp, _saveDirectory);
+                                session.OnLog += msg => Utils.LogTo(OnLog, msg);
+                                session.OnError += msg => Utils.LogTo(OnLog, msg);
+                                session.OnStopped += () =>
+                                {
+                                    lock (_sessionsLock) { _sessions.Remove(clientEp); }
+                                };
+                                _sessions[clientEp] = session;
+
+                                var startedHandler = OnSessionStarted;
+                                if (startedHandler != null) startedHandler(session);
+                                var _ = session.RunAsync(result.Buffer, ct);
+                            }
                         }
-                        else if (pktType == UdpProtocol.TypeFolderEnd)
+                    }
+                    else if (pktType == UdpProtocol.TypeData || pktType == UdpProtocol.TypeFin || pktType == UdpProtocol.TypeFolderEnd)
+                    {
+                        TransferUdpSession session;
+                        lock (_sessionsLock) { _sessions.TryGetValue(clientEp, out session); }
+                        bool enqueued = false;
+                        if (session != null)
+                            enqueued = session.EnqueuePacket(result.Buffer);
+                        if (!enqueued && pktType == UdpProtocol.TypeFolderEnd)
                         {
-                            Log(L.UdpS_FolderEndReceived);
                             var ack = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, 0, null);
-                            await _udp.SendAsync(ack, ack.Length, clientEp).ConfigureAwait(false);
-                            var compHandler = OnTransferComplete;
-                            if (compHandler != null) compHandler();
+                            try { await _udp.SendAsync(ack, ack.Length, clientEp); } catch { }
                         }
                     }
                 }
@@ -163,281 +152,6 @@ namespace TrFileTransfer
                     if (ct.IsCancellationRequested) break;
                     Log(L.UdpS_ReceiveError(ex.Message));
                 }
-            }
-        }
-
-        private async Task HandleTransfer(IPEndPoint clientEp, byte[] helloPacket, CancellationToken ct)
-        {
-            byte type;
-            int seq, bodyLen;
-            if (!UdpProtocol.ParseHeader(helloPacket, out type, out seq, out bodyLen) || type != UdpProtocol.TypeHello)
-                return;
-
-            if (bodyLen < 11) return;
-
-            byte transferType = helloPacket[UdpProtocol.HeaderSize];
-            long fileSize = BitConverter.ToInt64(helloPacket, UdpProtocol.HeaderSize + 1);
-            int nameLen = BitConverter.ToInt16(helloPacket, UdpProtocol.HeaderSize + 9);
-            if (fileSize < 0 || nameLen <= 0 || nameLen > 4096) return;
-            if (UdpProtocol.HeaderSize + 11 + nameLen > helloPacket.Length) return;
-
-            string fileName = System.Text.Encoding.UTF8.GetString(helloPacket, UdpProtocol.HeaderSize + 11, nameLen);
-
-            bool isFolderFile = (transferType == 0x01);
-            string savePath;
-            if (isFolderFile)
-            {
-                fileName = Utils.SanitizeRelativePath(fileName);
-                savePath = Path.Combine(_saveDirectory, fileName);
-                string dir = Path.GetDirectoryName(savePath);
-                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                    Directory.CreateDirectory(dir);
-            }
-            else
-            {
-                fileName = Path.GetFileName(fileName);
-                if (string.IsNullOrWhiteSpace(fileName))
-                    fileName = "received_file";
-                savePath = Utils.GetUniqueSavePath(_saveDirectory, fileName);
-            }
-
-            Log(L.UdpS_Receiving(fileName, Utils.FormatSize(fileSize)));
-
-            // Send HELLO ACK
-            var helloAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, 0, null);
-            await _udp.SendAsync(helloAck, helloAck.Length, clientEp).ConfigureAwait(false);
-
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            long bytesReceived = 0;
-            int expectedSeq = 0;
-            int totalChunks = (int)((fileSize + UdpProtocol.MaxChunkSize - 1) / UdpProtocol.MaxChunkSize);
-            var progressTimer = System.Diagnostics.Stopwatch.StartNew();
-            int retryCount = 0;
-            int lastNakSeq = -1;
-            int outOfOrderCount = 0;
-            int unackedSinceLastAck = 0;
-            const int AckBatchCount = 512; // one ACK per full window (512 chunks × 4096B = 2MB)
-            DateTime lastAckTime = DateTime.UtcNow;
-            const int NakThreshold = 3; // require 3 out-of-order packets before NAK (like TCP fast retransmit)
-            bool interruptedByPacket = false;
-            bool finProcessed = false;
-
-            const int WriteBufSize = 2 * 1024 * 1024; // 2 MB — flush once per window
-            byte[] writeBuf = new byte[WriteBufSize];
-            int writeBufPos = 0;
-
-            using (var sha256 = SHA256.Create())
-            using (var fileStream = new FileStream(savePath, FileMode.Create, FileAccess.Write,
-                FileShare.None, 65536, FileOptions.SequentialScan))
-            {
-                while (!finProcessed && !ct.IsCancellationRequested)
-                {
-                    bool timedOut = false;
-                    _udp.Client.ReceiveTimeout = UdpProtocol.TimeoutMs;
-                    try
-                    {
-                        var result = await _udp.ReceiveAsync().ConfigureAwait(false);
-
-                        if (!result.RemoteEndPoint.Equals(clientEp))
-                            continue;
-
-                        if (!UdpProtocol.ParseHeader(result.Buffer, out type, out seq, out bodyLen))
-                            continue;
-
-                        if (type == UdpProtocol.TypeData)
-                        {
-                            // Any data from the client means it is still active — reset retry count
-                            retryCount = 0;
-
-                            if (seq == expectedSeq && expectedSeq < totalChunks)
-                            {
-                                int dataOffset = UdpProtocol.HeaderSize;
-                                int dataLen = bodyLen;
-                                if (dataOffset + dataLen > result.Buffer.Length)
-                                    dataLen = result.Buffer.Length - dataOffset;
-                                if (dataLen <= 0) continue;
-
-                                sha256.TransformBlock(result.Buffer, dataOffset, dataLen, null, 0);
-                                Buffer.BlockCopy(result.Buffer, dataOffset, writeBuf, writeBufPos, dataLen);
-                                writeBufPos += dataLen;
-                                if (writeBufPos + UdpProtocol.MaxChunkSize > WriteBufSize)
-                                {
-                                    await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
-                                    writeBufPos = 0;
-                                }
-                                bytesReceived += dataLen;
-                                expectedSeq++;
-                                lastNakSeq = -1;
-                                outOfOrderCount = 0;
-                                unackedSinceLastAck++;
-
-                                if (progressTimer.ElapsedMilliseconds >= 100 || expectedSeq >= totalChunks)
-                                {
-                                    progressTimer.Restart();
-                                    var progressHandler = OnProgress;
-                                    if (progressHandler != null)
-                                        progressHandler(new TransferProgress
-                                        {
-                                            BytesTransferred = bytesReceived,
-                                            TotalBytes = fileSize,
-                                            SpeedBytesPerSecond = bytesReceived / sw.Elapsed.TotalSeconds,
-                                            Elapsed = sw.Elapsed,
-                                            FileName = fileName
-                                        });
-                                }
-                            }
-                            else
-                            {
-                                // Only NAK after NakThreshold out-of-order packets for the same gap
-                                outOfOrderCount++;
-                                if (outOfOrderCount >= NakThreshold
-                                    && expectedSeq != lastNakSeq
-                                    && expectedSeq < totalChunks)
-                                {
-                                    var nak = UdpProtocol.BuildPacket(UdpProtocol.TypeNak, expectedSeq, null);
-                                    await _udp.SendAsync(nak, nak.Length, clientEp).ConfigureAwait(false);
-                                    lastNakSeq = expectedSeq;
-                                }
-                            }
-                        }
-                        else if (type == UdpProtocol.TypeFin)
-                        {
-                            // Ensure all data is on disk before processing FIN
-                            if (unackedSinceLastAck > 0)
-                            {
-                                var flushAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
-                                await _udp.SendAsync(flushAck, flushAck.Length, clientEp).ConfigureAwait(false);
-                                unackedSinceLastAck = 0;
-                                lastAckTime = DateTime.UtcNow;
-                            }
-                            if (writeBufPos > 0)
-                            {
-                                await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
-                                writeBufPos = 0;
-                                await fileStream.FlushAsync(ct).ConfigureAwait(false);
-                            }
-
-                            if (expectedSeq >= totalChunks)
-                            {
-                                sha256.TransformFinalBlock(new byte[0], 0, 0);
-                                if (bodyLen >= 32)
-                                {
-                                    var receivedHash = new byte[32];
-                                    Buffer.BlockCopy(result.Buffer, UdpProtocol.HeaderSize, receivedHash, 0, 32);
-                                    var computedHash = sha256.Hash;
-
-                                    var finAckType = Utils.ConstantTimeEquals(receivedHash, computedHash)
-                                        ? UdpProtocol.TypeFinAck : UdpProtocol.TypeFin;
-                                    var finAck = UdpProtocol.BuildPacket(finAckType, 0,
-                                        finAckType == UdpProtocol.TypeFinAck ? null : new byte[1]);
-                                    await _udp.SendAsync(finAck, finAck.Length, clientEp).ConfigureAwait(false);
-
-                                    if (finAckType != UdpProtocol.TypeFinAck)
-                                    {
-                                        Log(L.S_HashFailed(fileName));
-                                        var errHandler = OnError;
-                                        if (errHandler != null) errHandler(L.S_HashFailed(fileName));
-                                        return;
-                                    }
-                                }
-                                else
-                                {
-                                    var finAck = UdpProtocol.BuildPacket(UdpProtocol.TypeFinAck, 0, null);
-                                    await _udp.SendAsync(finAck, finAck.Length, clientEp).ConfigureAwait(false);
-                                }
-                                finProcessed = true;
-                            }
-                            else
-                            {
-                                // Client sent FIN but server hasn't received all data.
-                                // Re-send cumulative ACK so client knows where to retransmit from.
-                                var ack = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
-                                await _udp.SendAsync(ack, ack.Length, clientEp).ConfigureAwait(false);
-                            }
-                        }
-                        else if (type == UdpProtocol.TypeHello || type == UdpProtocol.TypeFolderEnd)
-                        {
-                            _pendingPacketData = new byte[result.Buffer.Length];
-                            Buffer.BlockCopy(result.Buffer, 0, _pendingPacketData, 0, result.Buffer.Length);
-                            _pendingPacketEp = result.RemoteEndPoint;
-                            interruptedByPacket = true;
-                            // Flush any pending ACK before switching to next transfer
-                            if (unackedSinceLastAck > 0)
-                            {
-                                var flushAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
-                                await _udp.SendAsync(flushAck, flushAck.Length, clientEp).ConfigureAwait(false);
-                                unackedSinceLastAck = 0;
-                            }
-                            if (writeBufPos > 0)
-                            {
-                                await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
-                                writeBufPos = 0;
-                            }
-                            break;
-                        }
-
-                        // Batch ACK: send one ACK per AckBatchCount chunks or every 50ms
-                        bool shouldSendAck = (unackedSinceLastAck >= AckBatchCount);
-                        if (!shouldSendAck && unackedSinceLastAck > 0)
-                            shouldSendAck = (DateTime.UtcNow - lastAckTime).TotalMilliseconds >= 50;
-                        if (shouldSendAck)
-                        {
-                            var batchAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
-                            await _udp.SendAsync(batchAck, batchAck.Length, clientEp).ConfigureAwait(false);
-                            unackedSinceLastAck = 0;
-                            lastAckTime = DateTime.UtcNow;
-                        }
-                    }
-                    catch (SocketException)
-                    {
-                        retryCount++;
-                        if (retryCount > UdpProtocol.MaxRetries)
-                        {
-                            Log(L.UdpS_DataTimeout);
-                            break;
-                        }
-                        // Flush pending ACK counter — the ACK resend below will inform the client
-                        unackedSinceLastAck = 0;
-                        timedOut = true;
-                    }
-                    catch (ObjectDisposedException)
-                    {
-                        break;
-                    }
-
-                    // Re-send the last ACK on timeout, in case the client missed previous ACKs
-                    if (timedOut && expectedSeq > 0)
-                    {
-                        try
-                        {
-                            var ack = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
-                            await _udp.SendAsync(ack, ack.Length, clientEp).ConfigureAwait(false);
-                        }
-                        catch { }
-                    }
-                }
-
-                if (writeBufPos > 0)
-                    await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
-                await fileStream.FlushAsync(ct).ConfigureAwait(false);
-            }
-
-            if (interruptedByPacket)
-                return;
-
-            if (!finProcessed)
-                return;
-
-            sw.Stop();
-            Log(L.S_TransferDone(fileName, Utils.FormatSize(fileSize),
-                sw.Elapsed.TotalSeconds,
-                Utils.FormatSize((long)(fileSize / Math.Max(sw.Elapsed.TotalSeconds, 0.001)))));
-
-            // Only signal completion for single-file transfers, not individual folder files
-            if (!isFolderFile)
-            {
-                var completeHandler = OnTransferComplete;
-                if (completeHandler != null) completeHandler();
             }
         }
 

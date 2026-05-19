@@ -1,0 +1,329 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace TrFileTransfer
+{
+    /// <summary>Per-client UDP transfer session. One instance per connected client.</summary>
+    #pragma warning disable 1591
+    public class TransferUdpSession
+    {
+        private readonly UdpClient _udp;
+        private readonly IPEndPoint _clientEp;
+        private readonly string _saveDirectory;
+        private readonly Queue<byte[]> _packets = new Queue<byte[]>();
+        private readonly object _lock = new object();
+        private readonly SemaphoreSlim _signal = new SemaphoreSlim(0);
+        private volatile bool _disposed;
+
+        public event Action<string> OnLog;
+        public event Action<TransferProgress> OnProgress;
+        public event Action<string> OnError;
+        public event Action OnTransferComplete;
+        public event Action OnStopped;
+
+        public bool IsRunning { get; private set; }
+
+        public TransferUdpSession(UdpClient udp, IPEndPoint clientEp, string saveDirectory)
+        {
+            _udp = udp;
+            _clientEp = clientEp;
+            _saveDirectory = saveDirectory;
+        }
+
+        public bool EnqueuePacket(byte[] packet)
+        {
+            if (_disposed || !IsRunning) return false;
+            lock (_lock) { _packets.Enqueue(packet); }
+            _signal.Release();
+            return true;
+        }
+
+        public void Stop()
+        {
+            _disposed = true;
+            _signal.Release(); // wake up RunAsync
+        }
+
+        public async Task RunAsync(byte[] helloPacket, CancellationToken ct)
+        {
+            IsRunning = true;
+            try
+            {
+                await ProcessTransfer(helloPacket, ct);
+            }
+            catch (OperationCanceledException) { }
+            catch (ObjectDisposedException) { }
+            catch (Exception ex)
+            {
+                var errHandler = OnError;
+                if (errHandler != null) errHandler(ex.Message);
+                Log("Session error: " + ex.Message);
+            }
+            finally
+            {
+                IsRunning = false;
+                var stoppedHandler = OnStopped;
+                if (stoppedHandler != null) stoppedHandler();
+            }
+        }
+
+        private async Task ProcessTransfer(byte[] helloPacket, CancellationToken ct)
+        {
+            byte type;
+            int seq, bodyLen;
+            if (!UdpProtocol.ParseHeader(helloPacket, out type, out seq, out bodyLen) || type != UdpProtocol.TypeHello)
+                return;
+
+            if (bodyLen < 11) return;
+            byte transferType = helloPacket[UdpProtocol.HeaderSize];
+            long fileSize = BitConverter.ToInt64(helloPacket, UdpProtocol.HeaderSize + 1);
+            int nameLen = BitConverter.ToInt16(helloPacket, UdpProtocol.HeaderSize + 9);
+            if (fileSize < 0 || nameLen <= 0 || nameLen > 4096) return;
+            if (UdpProtocol.HeaderSize + 11 + nameLen > helloPacket.Length) return;
+
+            string fileName = System.Text.Encoding.UTF8.GetString(helloPacket, UdpProtocol.HeaderSize + 11, nameLen);
+            bool isFolderFile = (transferType == 0x01);
+
+            string savePath;
+            if (isFolderFile)
+            {
+                fileName = Utils.SanitizeRelativePath(fileName);
+                savePath = Path.Combine(_saveDirectory, fileName);
+                string dir = Path.GetDirectoryName(savePath);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+            }
+            else
+            {
+                fileName = Path.GetFileName(fileName);
+                if (string.IsNullOrWhiteSpace(fileName))
+                    fileName = "received_file";
+                savePath = Utils.GetUniqueSavePath(_saveDirectory, fileName);
+            }
+
+            Log(L.UdpS_Receiving(fileName, Utils.FormatSize(fileSize)));
+
+            var helloAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, 0, null);
+            await _udp.SendAsync(helloAck, helloAck.Length, _clientEp).ConfigureAwait(false);
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            long bytesReceived = 0;
+            int expectedSeq = 0;
+            int totalChunks = (int)((fileSize + UdpProtocol.MaxChunkSize - 1) / UdpProtocol.MaxChunkSize);
+            var progressTimer = System.Diagnostics.Stopwatch.StartNew();
+            int retryCount = 0;
+            int lastNakSeq = -1;
+            int outOfOrderCount = 0;
+            int unackedSinceLastAck = 0;
+            const int AckBatchCount = 512;
+            DateTime lastAckTime = DateTime.UtcNow;
+            const int NakThreshold = 3;
+            bool finProcessed = false;
+
+            const int WriteBufSize = 2 * 1024 * 1024;
+            byte[] writeBuf = new byte[WriteBufSize];
+            int writeBufPos = 0;
+
+            using (var sha256 = SHA256.Create())
+            using (var fileStream = new FileStream(savePath, FileMode.Create, FileAccess.Write,
+                FileShare.None, 65536, FileOptions.SequentialScan))
+            {
+                while (!finProcessed && !ct.IsCancellationRequested && !_disposed)
+                {
+                    bool timedOut = false;
+                    try
+                    {
+                        await _signal.WaitAsync(UdpProtocol.TimeoutMs, ct).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) { break; }
+                    catch (ObjectDisposedException) { break; }
+
+                    byte[] packet = null;
+                    lock (_lock)
+                    {
+                        if (_packets.Count > 0)
+                            packet = _packets.Dequeue();
+                    }
+
+                    if (packet == null)
+                    {
+                        if (_disposed) break;
+                        retryCount++;
+                        if (retryCount > UdpProtocol.MaxRetries) { Log(L.UdpS_DataTimeout); break; }
+                        timedOut = true;
+                    }
+                    else
+                    {
+                        if (!UdpProtocol.ParseHeader(packet, out type, out seq, out bodyLen))
+                            continue;
+
+                        if (type == UdpProtocol.TypeData)
+                        {
+                            retryCount = 0;
+                            int dataOffset = UdpProtocol.HeaderSize;
+
+                            if (seq == expectedSeq && expectedSeq < totalChunks)
+                            {
+                                int dataLen = bodyLen;
+                                if (dataOffset + dataLen > packet.Length)
+                                    dataLen = packet.Length - dataOffset;
+                                if (dataLen <= 0) continue;
+
+                                sha256.TransformBlock(packet, dataOffset, dataLen, null, 0);
+                                Buffer.BlockCopy(packet, dataOffset, writeBuf, writeBufPos, dataLen);
+                                writeBufPos += dataLen;
+                                if (writeBufPos + UdpProtocol.MaxChunkSize > WriteBufSize)
+                                {
+                                    await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
+                                    writeBufPos = 0;
+                                }
+                                bytesReceived += dataLen;
+                                expectedSeq++;
+                                lastNakSeq = -1;
+                                outOfOrderCount = 0;
+                                unackedSinceLastAck++;
+
+                                if (progressTimer.ElapsedMilliseconds >= 100 || expectedSeq >= totalChunks)
+                                {
+                                    progressTimer.Restart();
+                                    var progressHandler = OnProgress;
+                                    if (progressHandler != null)
+                                        progressHandler(new TransferProgress
+                                        {
+                                            BytesTransferred = bytesReceived,
+                                            TotalBytes = fileSize,
+                                            SpeedBytesPerSecond = bytesReceived / sw.Elapsed.TotalSeconds,
+                                            Elapsed = sw.Elapsed,
+                                            FileName = fileName
+                                        });
+                                }
+                            }
+                            else
+                            {
+                                outOfOrderCount++;
+                                if (outOfOrderCount >= NakThreshold
+                                    && expectedSeq != lastNakSeq && expectedSeq < totalChunks)
+                                {
+                                    var nak = UdpProtocol.BuildPacket(UdpProtocol.TypeNak, expectedSeq, null);
+                                    await _udp.SendAsync(nak, nak.Length, _clientEp).ConfigureAwait(false);
+                                    lastNakSeq = expectedSeq;
+                                }
+                            }
+                        }
+                        else if (type == UdpProtocol.TypeFolderEnd)
+                        {
+                            var fack = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, 0, null);
+                            await _udp.SendAsync(fack, fack.Length, _clientEp).ConfigureAwait(false);
+                            if (writeBufPos > 0)
+                            {
+                                await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
+                                writeBufPos = 0;
+                                await fileStream.FlushAsync(ct).ConfigureAwait(false);
+                            }
+                            finProcessed = true;
+                        }
+                        else if (type == UdpProtocol.TypeFin)
+                        {
+                            if (unackedSinceLastAck > 0)
+                            {
+                                var flushAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
+                                await _udp.SendAsync(flushAck, flushAck.Length, _clientEp).ConfigureAwait(false);
+                                unackedSinceLastAck = 0;
+                                lastAckTime = DateTime.UtcNow;
+                            }
+                            if (writeBufPos > 0)
+                            {
+                                await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
+                                writeBufPos = 0;
+                                await fileStream.FlushAsync(ct).ConfigureAwait(false);
+                            }
+
+                            if (expectedSeq >= totalChunks)
+                            {
+                                sha256.TransformFinalBlock(new byte[0], 0, 0);
+                                if (bodyLen >= 32)
+                                {
+                                    var receivedHash = new byte[32];
+                                    Buffer.BlockCopy(packet, UdpProtocol.HeaderSize, receivedHash, 0, 32);
+                                    var computedHash = sha256.Hash;
+                                    var finAckType = Utils.ConstantTimeEquals(receivedHash, computedHash)
+                                        ? UdpProtocol.TypeFinAck : UdpProtocol.TypeFin;
+                                    var finAck = UdpProtocol.BuildPacket(finAckType, 0,
+                                        finAckType == UdpProtocol.TypeFinAck ? null : new byte[1]);
+                                    await _udp.SendAsync(finAck, finAck.Length, _clientEp).ConfigureAwait(false);
+                                    if (finAckType != UdpProtocol.TypeFinAck)
+                                    {
+                                        Log(L.S_HashFailed(fileName));
+                                        var errHandler = OnError;
+                                        if (errHandler != null) errHandler(L.S_HashFailed(fileName));
+                                        return;
+                                    }
+                                }
+                                else
+                                {
+                                    var finAck = UdpProtocol.BuildPacket(UdpProtocol.TypeFinAck, 0, null);
+                                    await _udp.SendAsync(finAck, finAck.Length, _clientEp).ConfigureAwait(false);
+                                }
+                                finProcessed = true;
+                            }
+                            else
+                            {
+                                var ack = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
+                                await _udp.SendAsync(ack, ack.Length, _clientEp).ConfigureAwait(false);
+                            }
+                        }
+                    }
+
+                    if (timedOut && expectedSeq > 0)
+                    {
+                        try
+                        {
+                            var ack = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
+                            await _udp.SendAsync(ack, ack.Length, _clientEp).ConfigureAwait(false);
+                        }
+                        catch { }
+                    }
+
+                    bool shouldSendAck = (unackedSinceLastAck >= AckBatchCount);
+                    if (!shouldSendAck && unackedSinceLastAck > 0)
+                        shouldSendAck = (DateTime.UtcNow - lastAckTime).TotalMilliseconds >= 50;
+                    if (shouldSendAck)
+                    {
+                        var batchAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
+                        await _udp.SendAsync(batchAck, batchAck.Length, _clientEp).ConfigureAwait(false);
+                        unackedSinceLastAck = 0;
+                        lastAckTime = DateTime.UtcNow;
+                    }
+                }
+
+                if (writeBufPos > 0)
+                    await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
+                await fileStream.FlushAsync(ct).ConfigureAwait(false);
+            }
+
+            if (!finProcessed) return;
+
+            sw.Stop();
+            Log(L.S_TransferDone(fileName, Utils.FormatSize(fileSize),
+                sw.Elapsed.TotalSeconds,
+                Utils.FormatSize((long)(fileSize / Math.Max(sw.Elapsed.TotalSeconds, 0.001)))));
+
+            if (!isFolderFile)
+            {
+                var completeHandler = OnTransferComplete;
+                if (completeHandler != null) completeHandler();
+            }
+        }
+
+        private void Log(string msg)
+        {
+            Utils.LogTo(OnLog, msg);
+        }
+    }
+}
