@@ -632,12 +632,15 @@ namespace TrFileTransfer
 
         private void ResetClientUI()
         {
-_lblStatusC.Text = L.Ready;
+            _lblStatusC.Text = L.Ready;
             _btnSend.Enabled = true;
             _btnCancel.Enabled = false;
-            _rbTcp.Enabled = true;
-            _rbUdp.Enabled = true;
-            _cmbLang.Enabled = true;
+            if (!_btnStopServer.Enabled)
+            {
+                _rbTcp.Enabled = true;
+                _rbUdp.Enabled = true;
+                _cmbLang.Enabled = true;
+            }
             _txtServerIp.Enabled = true;
             _txtPortC.Enabled = true;
             _txtFile.Enabled = true;
