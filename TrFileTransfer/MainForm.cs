@@ -47,10 +47,12 @@ namespace TrFileTransfer
         private CheckBox _chkMonitor;
 
         // Progress
-        private GroupBox _gbProgress;
-        private FlowLayoutPanel _progressPanel;
-        private ProgressBar _progressBar;
-        private Label _lblStatus;
+        private GroupBox _gbProgressS;
+        private FlowLayoutPanel _progressPanelS;
+        private Label _lblStatusS;
+        private GroupBox _gbProgressC;
+        private FlowLayoutPanel _progressPanelC;
+        private Label _lblStatusC;
 
         // Log
         private GroupBox _gbLog;
@@ -160,19 +162,29 @@ namespace TrFileTransfer
             _gbClient.Controls.Add(_btnSend);
             _gbClient.Controls.Add(_btnCancel);
 
-            // Progress panel
-            _gbProgress = new GroupBox { Location = new Point(12, 349), Size = new Size(580, 205) };
-            _progressBar = new ProgressBar { Location = new Point(15, 16), Width = 545, Height = 14, Style = ProgressBarStyle.Continuous, Visible = false };
-            _progressPanel = new FlowLayoutPanel
+            // Server progress panel
+            _gbProgressS = new GroupBox { Location = new Point(12, 349), Size = new Size(286, 205) };
+            _progressPanelS = new FlowLayoutPanel
             {
-                Location = new Point(5, 34), Width = 565, Height = 148,
+                Location = new Point(5, 14), Width = 274, Height = 170,
                 AutoScroll = true, FlowDirection = FlowDirection.TopDown,
                 WrapContents = false
             };
-            _lblStatus = new Label { Location = new Point(15, 184), Width = 545, Text = L.Ready };
-            _gbProgress.Controls.Add(_progressBar);
-            _gbProgress.Controls.Add(_progressPanel);
-            _gbProgress.Controls.Add(_lblStatus);
+            _lblStatusS = new Label { Location = new Point(5, 186), Width = 274, Text = "" };
+            _gbProgressS.Controls.Add(_progressPanelS);
+            _gbProgressS.Controls.Add(_lblStatusS);
+
+            // Client progress panel
+            _gbProgressC = new GroupBox { Location = new Point(306, 349), Size = new Size(286, 205) };
+            _progressPanelC = new FlowLayoutPanel
+            {
+                Location = new Point(5, 14), Width = 274, Height = 170,
+                AutoScroll = true, FlowDirection = FlowDirection.TopDown,
+                WrapContents = false
+            };
+            _lblStatusC = new Label { Location = new Point(5, 186), Width = 274, Text = L.Ready };
+            _gbProgressC.Controls.Add(_progressPanelC);
+            _gbProgressC.Controls.Add(_lblStatusC);
 
             // Log panel
             _gbLog = new GroupBox { Location = new Point(12, 564), Size = new Size(580, 170) };
@@ -183,7 +195,8 @@ namespace TrFileTransfer
             Controls.Add(_gbProtocol);
             Controls.Add(_gbServer);
             Controls.Add(_gbClient);
-            Controls.Add(_gbProgress);
+            Controls.Add(_gbProgressS);
+            Controls.Add(_gbProgressC);
             Controls.Add(_gbLog);
         }
 
@@ -216,7 +229,8 @@ namespace TrFileTransfer
             _chkFolder.Text = L.FolderMode;
             _chkMonitor.Text = L.MonitorMode;
 
-            _gbProgress.Text = L.ProgressGroup;
+            _gbProgressS.Text = L.ServerProgress;
+            _gbProgressC.Text = L.ClientProgress;
 
             _gbLog.Text = L.LogGroup;
 
@@ -382,7 +396,7 @@ namespace TrFileTransfer
             {
                 _server = new TransferServer(bindAddr, port, saveDir);
                 _server.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
-                _server.OnError += msg => this.Invoke((Action)(() => _lblStatus.Text = L.ErrorPrefix + msg));
+                _server.OnError += msg => this.Invoke((Action)(() => _lblStatusS.Text = L.ErrorPrefix + msg));
                 _server.OnClientConnected += ep => this.Invoke((Action)(() => { }));
                 _server.OnClientProgress += (ep, p) => this.Invoke((Action)(() =>
                 {
@@ -396,7 +410,7 @@ namespace TrFileTransfer
                 }));
                 _server.OnTransferComplete += () => this.Invoke((Action)(() =>
                 {
-                    _lblStatus.Text = L.Listening;
+                    _lblStatusS.Text = L.Listening;
                 }));
                 _server.OnStarted += () => this.Invoke((Action)(() => OnServerStarted()));
                 _server.OnStopped += () => this.Invoke((Action)(() =>
@@ -418,7 +432,7 @@ namespace TrFileTransfer
                     session.OnTransferComplete += () => this.Invoke((Action)(() =>
                     {
                         UpdateCardComplete(cardPanel);
-                        _lblStatus.Text = L.Listening;
+                        _lblStatusS.Text = L.Listening;
                     }));
                     session.OnStopped += () => this.Invoke((Action)(() => UpdateCardComplete(cardPanel)));
                     session.OnError += msg => this.Invoke((Action)(() => AddLog(L.ErrorPrefix + msg)));
@@ -472,13 +486,13 @@ namespace TrFileTransfer
         {
             _btnStartServer.Enabled = false;
             _btnStopServer.Enabled = true;
-            _lblStatus.Text = L.Listening;
+            _lblStatusS.Text = L.Listening;
         }
 
         private void OnServerStopped()
         {
             EnableServerInputs();
-            _lblStatus.Text = L.ServerStopped;
+            _lblStatusS.Text = L.ServerStopped;
         }
 
         private void BtnStopServer_Click(object sender, EventArgs e)
@@ -565,7 +579,7 @@ namespace TrFileTransfer
 
         private void WireClientEvents(TransferClient c)
         {
-            var card = CreateTransferCard();
+            var card = CreateTransferCard(_progressPanelC);
             c.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
             c.OnProgress += p => this.Invoke((Action)(() => UpdateCardProgress(card, p)));
             c.OnError += msg => this.Invoke((Action)(() =>
@@ -584,7 +598,7 @@ namespace TrFileTransfer
 
         private void WireUdpClientEvents(TransferUdpClient c)
         {
-            var card = CreateTransferCard();
+            var card = CreateTransferCard(_progressPanelC);
             c.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
             c.OnProgress += p => this.Invoke((Action)(() => UpdateCardProgress(card, p)));
             c.OnError += msg => this.Invoke((Action)(() =>
@@ -613,12 +627,12 @@ namespace TrFileTransfer
             if (_clientUdp != null)
                 _clientUdp.Cancel();
             _btnCancel.Enabled = false;
-            _lblStatus.Text = L.Cancelling;
+            _lblStatusC.Text = L.Cancelling;
         }
 
         private void ResetClientUI()
         {
-_lblStatus.Text = L.Ready;
+_lblStatusC.Text = L.Ready;
             _btnSend.Enabled = true;
             _btnCancel.Enabled = false;
             _rbTcp.Enabled = true;
@@ -630,15 +644,6 @@ _lblStatus.Text = L.Ready;
             _btnBrowseFile.Enabled = true;
             _chkFolder.Enabled = true;
             _chkMonitor.Enabled = true;
-        }
-
-        private void UpdateProgress(TransferProgress p)
-        {
-            if (p.TotalBytes > 0)
-                _progressBar.Value = (int)(p.BytesTransferred * 100 / p.TotalBytes);
-            _lblStatus.Text = p.BytesTransferred >= p.TotalBytes && p.TotalBytes > 0
-                ? L.TransferComplete
-                : L.Transferring(p.FileName, FormatEta(p));
         }
 
         private static string FormatEta(TransferProgress p)
@@ -661,51 +666,37 @@ _lblStatus.Text = L.Ready;
             Panel card;
             if (!_tcpCards.TryGetValue(ep, out card))
             {
-                card = CreateTransferCard();
+                card = CreateTransferCard(_progressPanelS);
                 _tcpCards[ep] = card;
             }
             return card;
         }
 
-        private Panel CreateTransferCard()
+        private Panel CreateTransferCard(FlowLayoutPanel parent)
         {
-            var panel = new Panel { Width = 555, Height = 28, Margin = new Padding(0, 1, 0, 0) };
+            var panel = new Panel { Width = parent.Width - 6, Height = 28, Margin = new Padding(0, 1, 0, 0) };
             var bar = new ProgressBar
             {
-                Location = new Point(2, 1), Width = 548, Height = 14,
+                Location = new Point(2, 1), Width = panel.Width - 6, Height = 14,
                 Style = ProgressBarStyle.Continuous, Minimum = 0, Maximum = 100
             };
             var lbl = new Label
             {
-                Location = new Point(4, 16), Width = 545, Height = 12,
+                Location = new Point(4, 16), Width = panel.Width - 8, Height = 12,
                 Text = "", AutoSize = false, TextAlign = ContentAlignment.MiddleLeft,
                 Font = new Font("Segoe UI", 7f)
             };
             panel.Controls.Add(bar);
             panel.Controls.Add(lbl);
             panel.Tag = new ProgressCardInfo { Bar = bar, Label = lbl };
-            _progressPanel.Controls.Add(panel);
+            parent.Controls.Add(panel);
             return panel;
         }
 
         private Panel CreateProgressCard(TransferUdpSession session)
         {
-            var panel = new Panel { Width = 555, Height = 28, Margin = new Padding(0, 1, 0, 0) };
-            var bar = new ProgressBar
-            {
-                Location = new Point(2, 1), Width = 548, Height = 14,
-                Style = ProgressBarStyle.Continuous, Minimum = 0, Maximum = 100
-            };
-            var lbl = new Label
-            {
-                Location = new Point(4, 16), Width = 545, Height = 12,
-                Text = "", AutoSize = false, TextAlign = ContentAlignment.MiddleLeft,
-                Font = new Font("Segoe UI", 7f)
-            };
-            panel.Controls.Add(bar);
-            panel.Controls.Add(lbl);
-            panel.Tag = new ProgressCardInfo { Session = session, Bar = bar, Label = lbl };
-            _progressPanel.Controls.Add(panel);
+            var panel = CreateTransferCard(_progressPanelS);
+            (panel.Tag as ProgressCardInfo).Session = session;
             return panel;
         }
 
@@ -730,7 +721,7 @@ _lblStatus.Text = L.Ready;
             timer.Tick += (s, e) =>
             {
                 timer.Stop(); timer.Dispose();
-                if (!card.IsDisposed) { _progressPanel.Controls.Remove(card); card.Dispose(); }
+                if (!card.IsDisposed && card.Parent != null) { card.Parent.Controls.Remove(card); card.Dispose(); }
             };
             timer.Start();
         }
@@ -750,7 +741,7 @@ _lblStatus.Text = L.Ready;
             _monitorCts = new System.Threading.CancellationTokenSource();
 
             DisableClientInputs();
-            _lblStatus.Text = L.MonitorWaiting;
+            _lblStatusC.Text = L.MonitorWaiting;
             AddLog(L.MonitorStarted(folderPath));
 
             string sentDir = Path.Combine(folderPath, "已发送文件");
@@ -766,7 +757,7 @@ _lblStatus.Text = L.Ready;
                 try { _monitorCts.Cancel(); } catch { }
             }
             _btnCancel.Enabled = false;
-            _lblStatus.Text = L.MonitorStopped;
+            _lblStatusC.Text = L.MonitorStopped;
             AddLog(L.MonitorLogStopped);
             ResetClientUI();
         }
@@ -775,6 +766,12 @@ _lblStatus.Text = L.Ready;
         {
             using (var watcher = new FileSystemWatcher(folderPath))
             {
+                // Scan existing files first
+                foreach (var file in Directory.GetFiles(folderPath))
+                {
+                    lock (_monitorLock) { _monitorQueue.Add(file); }
+                }
+
                 watcher.NotifyFilter = NotifyFilters.FileName;
                 watcher.Created += (s, e) =>
                 {
@@ -823,7 +820,7 @@ _lblStatus.Text = L.Ready;
             {
                 var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>();
 
-                var card = CreateTransferCard();
+                var card = (Panel)this.Invoke((Func<Panel>)(() => CreateTransferCard(_progressPanelC)));
                 if (_rbTcp.Checked)
                 {
                     var client = new TransferClient(ip, port, filePath);
@@ -860,7 +857,7 @@ _lblStatus.Text = L.Ready;
                 this.Invoke((Action)(() =>
                 {
                     AddLog(L.MonitorFileSent(fileName));
-                    _lblStatus.Text = L.MonitorWaiting;
+                    _lblStatusC.Text = L.MonitorWaiting;
                 }));
             }
         }

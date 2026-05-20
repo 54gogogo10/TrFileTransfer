@@ -120,11 +120,13 @@ namespace TrFileTransfer
                                     lock (_sessionsLock) { _sessions.Remove(clientEp); }
                                 };
                                 _sessions[clientEp] = session;
-
-                                var startedHandler = OnSessionStarted;
-                                if (startedHandler != null) startedHandler(session);
-                                var _ = session.RunAsync(result.Buffer, ct);
                             }
+                        }
+                        if (session != null)
+                        {
+                            var startedHandler = OnSessionStarted;
+                            if (startedHandler != null) startedHandler(session);
+                            var _ = session.RunAsync(result.Buffer, ct);
                         }
                     }
                     else if (pktType == UdpProtocol.TypeData || pktType == UdpProtocol.TypeFin || pktType == UdpProtocol.TypeFolderEnd)

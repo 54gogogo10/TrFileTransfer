@@ -34,6 +34,8 @@ namespace TrFileTransfer
 
         // ---- Progress ----
         public static string ProgressGroup { get { return IsChinese ? "传输进度" : "Progress"; } }
+        public static string ServerProgress { get { return IsChinese ? "服务器接收进度" : "Server Receive"; } }
+        public static string ClientProgress { get { return IsChinese ? "客户端发送进度" : "Client Send"; } }
         public static string SpeedLabel { get { return IsChinese ? "速度: --" : "Speed: --"; } }
         public static string Ready { get { return IsChinese ? "就绪" : "Ready"; } }
         public static string Listening { get { return IsChinese ? "监听中..." : "Listening..."; } }

@@ -50,7 +50,8 @@ namespace TrFileTransfer
             packet[5] = 0;
             Buffer.BlockCopy(BitConverter.GetBytes(sequence), 0, packet, 6, 4);
             Buffer.BlockCopy(BitConverter.GetBytes(sourceLen), 0, packet, 10, 4);
-            Buffer.BlockCopy(source, sourceOffset, packet, HeaderSize, sourceLen);
+            if (source != null && sourceLen > 0)
+                Buffer.BlockCopy(source, sourceOffset, packet, HeaderSize, sourceLen);
             return packet;
         }
 
