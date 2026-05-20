@@ -5,10 +5,12 @@
 ## 功能
 
 - **TCP** — 面向连接，防火墙友好
-- **UDP** — Go-Back-N ARQ 可靠传输（滑动窗口、重传、SHA-256）
+- **UDP** — Go-Back-N ARQ 可靠传输（滑动窗口、重传、选择性 NAK、SHA-256）
 - **单文件**或**文件夹**（递归，保留目录结构）
+- **多客户端并发** — 服务端同时接受多个客户端传输，每个独立进度卡片
+- **配置持久化** — 地址、端口、语言等设置自动保存到 `%AppData%`
 - **English / 中文** 可切换 UI
-- 进度条、速度显示、ETA
+- 收发进度面板左右分列，每个传输独立进度卡片（进度条 + 速度），完成后自动移除
 
 ## 快速开始
 
@@ -28,10 +30,10 @@ build.bat
 
 ### 使用
 
-1. **接收方** — 选择*服务器*，选择 TCP 或 UDP，选择保存目录，点击*启动服务器*
-2. **发送方** — 选择*客户端*，输入服务器 IP，浏览文件或文件夹，点击*发送*
+1. **接收方** — 左侧服务器面板：选择 TCP 或 UDP，选择保存目录，点击*启动服务器*
+2. **发送方** — 右侧客户端面板：输入服务器 IP，浏览文件或文件夹，点击*发送*
 3. 勾选*文件夹模式*可发送整个目录
-4. 勾选*监控模式*可持续监控目录，新文件自动发送
+4. 勾选*监控模式*可持续监控目录——启动时先扫描已有文件并入队，然后检测新文件自动发送
 
 ## 协议
 
@@ -46,8 +48,10 @@ build.bat
 | `TransferClient.cs` | TCP 发送端 |
 | `TransferServer.cs` | TCP 接收端 |
 | `TransferUdpClient.cs` | 可靠 UDP 发送端（Go-Back-N） |
-| `TransferUdpServer.cs` | 可靠 UDP 接收端 |
+| `TransferUdpServer.cs` | 可靠 UDP 接收端，分发到各 Session |
+| `TransferUdpSession.cs` | 每客户端 UDP 传输会话（包入队、写缓冲、NAK） |
 | `UdpProtocol.cs` | UDP 线协议常量和包辅助方法 |
+| `Config.cs` | 键值配置持久化（`%AppData%\TrFileTransfer\`） |
 | `Shared.cs` | `TransferProgress`、`Utils`、`FileEntry` |
 | `L10N.cs` | 中英文字符串 |
 
