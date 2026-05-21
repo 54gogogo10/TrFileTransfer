@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -122,7 +123,7 @@ namespace TrFileTransfer
             int outOfOrderCount = 0;
             int unackedSinceLastAck = 0;
             const int AckBatchCount = 512;
-            DateTime lastAckTime = DateTime.UtcNow;
+            long lastAckTimestamp = Stopwatch.GetTimestamp();
             const int NakThreshold = 3;
             bool finProcessed = false;
 
@@ -206,6 +207,8 @@ namespace TrFileTransfer
                             }
                             else
                             {
+                                if (seq < expectedSeq)
+                                    unackedSinceLastAck = AckBatchCount; // duplicate: force immediate cumulative ACK
                                 outOfOrderCount++;
                                 if (outOfOrderCount >= NakThreshold
                                     && expectedSeq != lastNakSeq && expectedSeq < totalChunks)
@@ -224,7 +227,6 @@ namespace TrFileTransfer
                             {
                                 await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
                                 writeBufPos = 0;
-                                await fileStream.FlushAsync(ct).ConfigureAwait(false);
                             }
                             finProcessed = true;
                         }
@@ -235,18 +237,17 @@ namespace TrFileTransfer
                                 var flushAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
                                 await _udp.SendAsync(flushAck, flushAck.Length, _clientEp).ConfigureAwait(false);
                                 unackedSinceLastAck = 0;
-                                lastAckTime = DateTime.UtcNow;
+                                lastAckTimestamp = Stopwatch.GetTimestamp();
                             }
                             if (writeBufPos > 0)
                             {
                                 await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
                                 writeBufPos = 0;
-                                await fileStream.FlushAsync(ct).ConfigureAwait(false);
                             }
 
                             if (expectedSeq >= totalChunks)
                             {
-                                sha256.TransformFinalBlock(new byte[0], 0, 0);
+                                sha256.TransformFinalBlock(Utils.EmptyBytes, 0, 0);
                                 if (bodyLen >= 32)
                                 {
                                     var receivedHash = new byte[32];
@@ -292,19 +293,19 @@ namespace TrFileTransfer
 
                     bool shouldSendAck = (unackedSinceLastAck >= AckBatchCount);
                     if (!shouldSendAck && unackedSinceLastAck > 0)
-                        shouldSendAck = (DateTime.UtcNow - lastAckTime).TotalMilliseconds >= 50;
+                        shouldSendAck = (Stopwatch.GetTimestamp() - lastAckTimestamp)
+                            * 1000.0 / Stopwatch.Frequency >= 50;
                     if (shouldSendAck)
                     {
                         var batchAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
                         await _udp.SendAsync(batchAck, batchAck.Length, _clientEp).ConfigureAwait(false);
                         unackedSinceLastAck = 0;
-                        lastAckTime = DateTime.UtcNow;
+                        lastAckTimestamp = Stopwatch.GetTimestamp();
                     }
                 }
 
                 if (writeBufPos > 0)
                     await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
-                await fileStream.FlushAsync(ct).ConfigureAwait(false);
             }
 
             if (!finProcessed) return;

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
@@ -17,8 +18,8 @@ namespace TrFileTransfer
         private readonly int _port;
         private readonly string _saveDirectory;
         private volatile bool _isRunning;
-        private readonly Dictionary<IPEndPoint, TransferUdpSession> _sessions = new Dictionary<IPEndPoint, TransferUdpSession>();
-        private readonly object _sessionsLock = new object();
+        private readonly ConcurrentDictionary<IPEndPoint, TransferUdpSession> _sessions
+            = new ConcurrentDictionary<IPEndPoint, TransferUdpSession>();
 
         /// <summary>Fired for every log message.</summary>
         public event Action<string> OnLog;
@@ -78,12 +79,8 @@ namespace TrFileTransfer
                 if (udp != null) udp.Close();
             }
             catch { }
-            List<TransferUdpSession> sessionsToStop;
-            lock (_sessionsLock)
-            {
-                sessionsToStop = new List<TransferUdpSession>(_sessions.Values);
-                _sessions.Clear();
-            }
+            var sessionsToStop = new List<TransferUdpSession>(_sessions.Values);
+            _sessions.Clear();
             foreach (var s in sessionsToStop)
                 s.Stop();
             var handler = OnStopped;
@@ -107,20 +104,19 @@ namespace TrFileTransfer
 
                     if (pktType == UdpProtocol.TypeHello)
                     {
-                        TransferUdpSession session = null;
-                        lock (_sessionsLock)
+                        TransferUdpSession session;
+                        if (!_sessions.TryGetValue(clientEp, out session))
                         {
-                            if (!_sessions.TryGetValue(clientEp, out session))
+                            session = new TransferUdpSession(_udp, clientEp, _saveDirectory);
+                            session.OnLog += msg => Utils.LogTo(OnLog, msg);
+                            session.OnError += msg => Utils.LogTo(OnLog, msg);
+                            session.OnStopped += () =>
                             {
-                                session = new TransferUdpSession(_udp, clientEp, _saveDirectory);
-                                session.OnLog += msg => Utils.LogTo(OnLog, msg);
-                                session.OnError += msg => Utils.LogTo(OnLog, msg);
-                                session.OnStopped += () =>
-                                {
-                                    lock (_sessionsLock) { _sessions.Remove(clientEp); }
-                                };
-                                _sessions[clientEp] = session;
-                            }
+                                TransferUdpSession removed;
+                                _sessions.TryRemove(clientEp, out removed);
+                            };
+                            if (!_sessions.TryAdd(clientEp, session))
+                                _sessions.TryGetValue(clientEp, out session);
                         }
                         if (session != null)
                         {
@@ -132,7 +128,7 @@ namespace TrFileTransfer
                     else if (pktType == UdpProtocol.TypeData || pktType == UdpProtocol.TypeFin || pktType == UdpProtocol.TypeFolderEnd)
                     {
                         TransferUdpSession session;
-                        lock (_sessionsLock) { _sessions.TryGetValue(clientEp, out session); }
+                        _sessions.TryGetValue(clientEp, out session);
                         bool enqueued = false;
                         if (session != null)
                             enqueued = session.EnqueuePacket(result.Buffer);

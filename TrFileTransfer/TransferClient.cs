@@ -123,7 +123,6 @@ namespace TrFileTransfer
                 Buffer.BlockCopy(BitConverter.GetBytes(nameBytes.Length), 0, header, 9, 4);
                 Buffer.BlockCopy(nameBytes, 0, header, 13, nameBytes.Length);
                 await stream.WriteAsync(header, 0, header.Length, ct);
-                await stream.FlushAsync(ct);
 
                 Log(L.C_Sending(fileName, Utils.FormatSize(fileSize)));
 
@@ -194,7 +193,6 @@ namespace TrFileTransfer
                 Buffer.BlockCopy(folderNameBytes, 0, header, pos, folderNameBytes.Length); pos += folderNameBytes.Length;
                 Buffer.BlockCopy(BitConverter.GetBytes(files.Length), 0, header, pos, 4);
                 await stream.WriteAsync(header, 0, header.Length, ct);
-                await stream.FlushAsync(ct);
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 long totalSent = 0;
@@ -252,9 +250,8 @@ namespace TrFileTransfer
                 int read = await fileStream.ReadAsync(bufA, 0, bufA.Length, ct);
                 if (read == 0)
                 {
-                    sha256.TransformFinalBlock(new byte[0], 0, 0);
+                    sha256.TransformFinalBlock(Utils.EmptyBytes, 0, 0);
                     await stream.WriteAsync(sha256.Hash, 0, 32, ct);
-                    await stream.FlushAsync(ct);
                     return;
                 }
 
@@ -288,11 +285,9 @@ namespace TrFileTransfer
                             });
                     }
                 }
-                sha256.TransformFinalBlock(new byte[0], 0, 0);
-                await stream.FlushAsync(ct);
+                sha256.TransformFinalBlock(Utils.EmptyBytes, 0, 0);
 
                 await stream.WriteAsync(sha256.Hash, 0, 32, ct);
-                await stream.FlushAsync(ct);
             }
         }
 

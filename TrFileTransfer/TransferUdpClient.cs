@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -256,7 +257,7 @@ namespace TrFileTransfer
                 int timeoutCount = 0;
                 double rttSmooth = UdpProtocol.TimeoutMs / 4.0;
                 int dynTimeout = UdpProtocol.TimeoutMs;
-                var windowSendTime = DateTime.MinValue;
+                var windowSendTimestamp = 0L;
                 bool canMeasureRtt = false;
                 const int ReadBufSize = 1048576; // 1 MB — match TCP buffer size
                 byte[] readBuf = new byte[ReadBufSize];
@@ -320,7 +321,7 @@ namespace TrFileTransfer
                         if (sendTasks.Count > 0)
                         {
                             await System.Threading.Tasks.Task.WhenAll(sendTasks.ToArray()).ConfigureAwait(false);
-                            windowSendTime = DateTime.UtcNow;
+                            windowSendTimestamp = Stopwatch.GetTimestamp();
                             canMeasureRtt = true;
                         }
                         udp.Client.ReceiveTimeout = dynTimeout;
@@ -341,7 +342,8 @@ namespace TrFileTransfer
                                     if (canMeasureRtt)
                                     {
                                         canMeasureRtt = false;
-                                        double rtt = (DateTime.UtcNow - windowSendTime).TotalMilliseconds;
+                                        double rtt = (Stopwatch.GetTimestamp() - windowSendTimestamp)
+                                            * 1000.0 / Stopwatch.Frequency;
                                         if (rtt > 0 && rtt < 10000)
                                         {
                                             rttSmooth = rttSmooth * 0.875 + rtt * 0.125;
@@ -386,7 +388,7 @@ namespace TrFileTransfer
                                 Log(L.UdpC_TooManyRetransmissions);
                                 return false;
                             }
-                            nextSeqNum = sendBase;
+                            retransmitQ.Enqueue(sendBase);
                             Log(L.UdpC_TimeoutRetransmitting(sendBase));
                         }
                         catch (ObjectDisposedException)
@@ -401,7 +403,7 @@ namespace TrFileTransfer
                     // --- All data ACKed; compute hash (once) and enter FIN phase ---
                     if (fileHash == null)
                     {
-                        sha256.TransformFinalBlock(new byte[0], 0, 0);
+                        sha256.TransformFinalBlock(Utils.EmptyBytes, 0, 0);
                         fileHash = sha256.Hash;
 
                         if (reportProgress)
@@ -427,10 +429,13 @@ namespace TrFileTransfer
                         var finPacket = UdpProtocol.BuildPacket(UdpProtocol.TypeFin, 0, fileHash);
                         await udp.SendAsync(finPacket, finPacket.Length, serverEp).ConfigureAwait(false);
 
-                        var deadline = DateTime.UtcNow.AddMilliseconds(dynTimeout);
-                        while (DateTime.UtcNow < deadline && !finAckReceived && !needsResend && !ct.IsCancellationRequested)
+                        long deadlineTimestamp = Stopwatch.GetTimestamp()
+                            + (long)(dynTimeout * Stopwatch.Frequency / 1000.0);
+                        while (Stopwatch.GetTimestamp() < deadlineTimestamp
+                            && !finAckReceived && !needsResend && !ct.IsCancellationRequested)
                         {
-                            int remaining = Math.Max((int)(deadline - DateTime.UtcNow).TotalMilliseconds, 1);
+                            int remaining = (int)Math.Max(
+                                (deadlineTimestamp - Stopwatch.GetTimestamp()) * 1000.0 / Stopwatch.Frequency, 1);
                             udp.Client.ReceiveTimeout = remaining;
                             try
                             {

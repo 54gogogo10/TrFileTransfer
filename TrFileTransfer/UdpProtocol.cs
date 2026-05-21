@@ -45,11 +45,21 @@ namespace TrFileTransfer
         public static byte[] BuildPacketFromBuffer(byte type, int sequence, byte[] source, int sourceOffset, int sourceLen)
         {
             var packet = new byte[HeaderSize + sourceLen];
-            Buffer.BlockCopy(BitConverter.GetBytes(Magic), 0, packet, 0, 4);
+            // Write magic, type, reserved, seq, bodyLen manually — avoids 3x BitConverter.GetBytes allocations
+            packet[0] = 0x54;
+            packet[1] = 0x50;
+            packet[2] = 0x44;
+            packet[3] = 0x55;
             packet[4] = type;
             packet[5] = 0;
-            Buffer.BlockCopy(BitConverter.GetBytes(sequence), 0, packet, 6, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(sourceLen), 0, packet, 10, 4);
+            packet[6] = (byte)sequence;
+            packet[7] = (byte)(sequence >> 8);
+            packet[8] = (byte)(sequence >> 16);
+            packet[9] = (byte)(sequence >> 24);
+            packet[10] = (byte)sourceLen;
+            packet[11] = (byte)(sourceLen >> 8);
+            packet[12] = (byte)(sourceLen >> 16);
+            packet[13] = (byte)(sourceLen >> 24);
             if (source != null && sourceLen > 0)
                 Buffer.BlockCopy(source, sourceOffset, packet, HeaderSize, sourceLen);
             return packet;

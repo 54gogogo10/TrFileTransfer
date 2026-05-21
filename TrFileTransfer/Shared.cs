@@ -4,7 +4,7 @@ using System.IO;
 namespace TrFileTransfer
 {
     /// <summary>Progress snapshot emitted periodically during a transfer.</summary>
-    public class TransferProgress
+    public struct TransferProgress
     {
         /// <summary>Bytes transferred so far.</summary>
         public long BytesTransferred { get; set; }
@@ -32,6 +32,9 @@ namespace TrFileTransfer
     /// <summary>General-purpose utility helpers.</summary>
     public static class Utils
     {
+        /// <summary>Reusable empty byte array (avoids per-call allocations).</summary>
+        public static readonly byte[] EmptyBytes = new byte[0];
+
         /// <summary>Formats a byte count into a human-readable string (e.g. "15.3 MB").</summary>
         public static string FormatSize(long bytes)
         {
