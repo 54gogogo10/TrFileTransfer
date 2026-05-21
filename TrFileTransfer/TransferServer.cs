@@ -150,12 +150,7 @@ namespace TrFileTransfer
             {
                 var ch = OnClientProgress; if (ch != null) ch(clientEp, p);
             };
-            Action clientComplete = () =>
-            {
-                var ch = OnClientTransferComplete; if (ch != null) ch(clientEp);
-            };
             OnProgress += clientProgress;
-            OnTransferComplete += clientComplete;
 
             using (client)
             {
@@ -176,6 +171,9 @@ namespace TrFileTransfer
                     {
                         await HandleFileTransfer(stream, ct);
                     }
+
+                    var ccHandler = OnClientTransferComplete;
+                    if (ccHandler != null) ccHandler(clientEp);
                 }
                 catch (OperationCanceledException) { }
                 catch (ObjectDisposedException) { }
@@ -194,7 +192,6 @@ namespace TrFileTransfer
                 finally
                 {
                     OnProgress -= clientProgress;
-                    OnTransferComplete -= clientComplete;
                 }
             }
         }
