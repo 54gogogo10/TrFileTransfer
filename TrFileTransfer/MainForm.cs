@@ -147,7 +147,7 @@ namespace TrFileTransfer
             _txtFile = new TextBox { Location = new Point(68, 60), Width = 290 };
             _btnBrowseFile = new Button { Location = new Point(365, 59), Width = 80 };
             _btnBrowseFile.Click += BtnBrowseFile_Click;
-            _chkFolder = new CheckBox { Location = new Point(350, 28), Width = 95, TextAlign = ContentAlignment.MiddleLeft };
+            _chkFolder = new CheckBox { Location = new Point(180, 93), Width = 100, TextAlign = ContentAlignment.MiddleLeft };
             _chkFolder.CheckedChanged += ChkFolder_CheckedChanged;
             _chkMonitor = new CheckBox { Location = new Point(70, 95), Width = 100, TextAlign = ContentAlignment.MiddleLeft };
             _chkMonitor.CheckedChanged += ChkMonitor_CheckedChanged;
@@ -408,7 +408,7 @@ namespace TrFileTransfer
 
             if (_chkServerTcp.Checked)
             {
-                _serverCount++;
+                bool tcpStarted = false;
                 var tcpServer = new TransferServer(bindAddr, port, saveDir);
                 tcpServer.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
                 tcpServer.OnError += msg => this.Invoke((Action)(() => _lblStatusS.Text = L.ErrorPrefix + msg));
@@ -427,11 +427,18 @@ namespace TrFileTransfer
                 {
                     _lblStatusS.Text = L.Listening;
                 }));
-                tcpServer.OnStarted += () => this.Invoke((Action)(() => OnServerStarted()));
+                tcpServer.OnStarted += () => this.Invoke((Action)(() =>
+                {
+                    tcpStarted = true;
+                    _serverCount++;
+                    OnServerStarted();
+                }));
                 tcpServer.OnStopped += () => this.Invoke((Action)(() =>
                 {
+                    if (!tcpStarted) return; // start failed, ignore
                     foreach (var c in _tcpCards.Values) UpdateCardComplete(c);
                     _tcpCards.Clear();
+                    _server = null;
                     OnServerStopped();
                 }));
                 _server = tcpServer;
@@ -440,7 +447,7 @@ namespace TrFileTransfer
 
             if (_chkServerUdp.Checked)
             {
-                _serverCount++;
+                bool udpStarted = false;
                 _serverUdp = new TransferUdpServer(port, saveDir);
                 _serverUdp.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
                 _serverUdp.OnSessionStarted += session => this.Invoke((Action)(() =>
@@ -455,9 +462,26 @@ namespace TrFileTransfer
                     session.OnStopped += () => this.Invoke((Action)(() => UpdateCardComplete(cardPanel)));
                     session.OnError += msg => this.Invoke((Action)(() => AddLog(L.ErrorPrefix + msg)));
                 }));
-                _serverUdp.OnStarted += () => this.Invoke((Action)(() => OnServerStarted()));
-                _serverUdp.OnStopped += () => this.Invoke((Action)(() => OnServerStopped()));
+                _serverUdp.OnStarted += () => this.Invoke((Action)(() =>
+                {
+                    udpStarted = true;
+                    _serverCount++;
+                    OnServerStarted();
+                }));
+                _serverUdp.OnStopped += () => this.Invoke((Action)(() =>
+                {
+                    if (!udpStarted) return; // start failed, ignore
+                    _serverUdp = null;
+                    OnServerStopped();
+                }));
                 _serverUdp.Start();
+            }
+
+            if (_serverCount == 0)
+            {
+                // Both protocols failed to start
+                EnableServerInputs();
+                MessageBox.Show(L.ServerStartFailed, L.DlgError, MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -509,7 +533,7 @@ namespace TrFileTransfer
 
         private void OnServerStopped()
         {
-            _serverCount--;
+            if (_serverCount > 0) _serverCount--;
             if (_serverCount > 0) return; // still have other servers running
             EnableServerInputs();
             _lblStatusS.Text = L.ServerStopped;
@@ -517,10 +541,9 @@ namespace TrFileTransfer
 
         private void BtnStopServer_Click(object sender, EventArgs e)
         {
-            if (_server != null)
-                _server.Stop();
-            if (_serverUdp != null)
-                _serverUdp.Stop();
+            _serverCount = 0; // reset before stopping so OnStopped handlers see zero
+            if (_server != null) { _server.Stop(); _server = null; }
+            if (_serverUdp != null) { _serverUdp.Stop(); _serverUdp = null; }
         }
 
         private async void BtnSend_Click(object sender, EventArgs e)

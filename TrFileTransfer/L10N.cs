@@ -12,7 +12,6 @@ namespace TrFileTransfer
 
         // ---- Mode ----
         public static string ModeGroup { get { return IsChinese ? "模式" : "Mode"; } }
-        public static string ProtocolGroup { get { return IsChinese ? "协议" : "Protocol"; } }
         public static string ModeServer { get { return IsChinese ? "服务器 (接收)" : "Server (Receive)"; } }
         public static string ModeClient { get { return IsChinese ? "客户端 (发送)" : "Client (Send)"; } }
 
@@ -64,6 +63,7 @@ namespace TrFileTransfer
         public static string BrowseFileTitle { get { return IsChinese ? "选择要发送的文件" : "Select file to send"; } }
         public static string ErrorPrefix { get { return IsChinese ? "错误: " : "Error: "; } }
         public static string NoProtocolSelected { get { return IsChinese ? "请至少选择一个服务器协议（TCP/UDP）。" : "Select at least one server protocol (TCP/UDP)."; } }
+        public static string ServerStartFailed { get { return IsChinese ? "服务器启动失败。请检查端口是否被占用。" : "Server start failed. Check if port is in use."; } }
 
         // ---- Folder mode ----
         public static string FolderMode { get { return IsChinese ? "文件夹模式" : "Folder mode"; } }
