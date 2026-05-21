@@ -105,6 +105,7 @@ namespace TrFileTransfer
                     if (pktType == UdpProtocol.TypeHello)
                     {
                         TransferUdpSession session;
+                        bool isNew = false;
                         if (!_sessions.TryGetValue(clientEp, out session))
                         {
                             session = new TransferUdpSession(_udp, clientEp, _saveDirectory);
@@ -117,12 +118,20 @@ namespace TrFileTransfer
                             };
                             if (!_sessions.TryAdd(clientEp, session))
                                 _sessions.TryGetValue(clientEp, out session);
+                            isNew = true;
                         }
-                        if (session != null)
+                        if (session != null && isNew)
                         {
                             var startedHandler = OnSessionStarted;
                             if (startedHandler != null) startedHandler(session);
                             var _ = session.RunAsync(result.Buffer, ct);
+                        }
+                        else if (session != null)
+                        {
+                            // Retransmitted HELLO — re-send ACK without restarting session
+                            var helloAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, 0, null);
+                            try { await _udp.SendAsync(helloAck, helloAck.Length, clientEp).ConfigureAwait(false); }
+                            catch { }
                         }
                     }
                     else if (pktType == UdpProtocol.TypeData || pktType == UdpProtocol.TypeFin || pktType == UdpProtocol.TypeFolderEnd)
