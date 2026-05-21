@@ -63,6 +63,7 @@ namespace TrFileTransfer
         public static string BrowseDirDesc { get { return IsChinese ? "选择接收文件的保存目录" : "Select directory to save received files"; } }
         public static string BrowseFileTitle { get { return IsChinese ? "选择要发送的文件" : "Select file to send"; } }
         public static string ErrorPrefix { get { return IsChinese ? "错误: " : "Error: "; } }
+        public static string NoProtocolSelected { get { return IsChinese ? "请至少选择一个服务器协议（TCP/UDP）。" : "Select at least one server protocol (TCP/UDP)."; } }
 
         // ---- Folder mode ----
         public static string FolderMode { get { return IsChinese ? "文件夹模式" : "Folder mode"; } }

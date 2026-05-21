@@ -15,10 +15,11 @@ namespace TrFileTransfer
         // Language
         private ComboBox _cmbLang;
 
-        // Protocol
-        private RadioButton _rbTcp;
-        private RadioButton _rbUdp;
-        private GroupBox _gbProtocol;
+        // Protocol — server checkboxes, client radio buttons
+        private CheckBox _chkServerTcp;
+        private CheckBox _chkServerUdp;
+        private RadioButton _rbClientTcp;
+        private RadioButton _rbClientUdp;
 
         // Server controls
         private GroupBox _gbServer;
@@ -63,6 +64,7 @@ namespace TrFileTransfer
         private TransferClient _client;
         private TransferUdpServer _serverUdp;
         private TransferUdpClient _clientUdp;
+        private int _serverCount;
         private Dictionary<IPEndPoint, Panel> _tcpCards = new Dictionary<IPEndPoint, Panel>();
 
         // Monitor mode
@@ -83,7 +85,7 @@ namespace TrFileTransfer
         private void InitializeComponent()
         {
             Text = L.AppTitle;
-            ClientSize = new Size(620, 740);
+            ClientSize = new Size(620, 785);
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
@@ -101,19 +103,16 @@ namespace TrFileTransfer
             _cmbLang.SelectedIndex = 0;
             _cmbLang.SelectedIndexChanged += CmbLang_SelectedIndexChanged;
 
-            // Protocol selection
-            _gbProtocol = new GroupBox { Location = new Point(12, 12), Size = new Size(140, 45) };
-            _rbTcp = new RadioButton { Text = "TCP", Location = new Point(10, 18), Width = 55, Checked = true };
-            _rbUdp = new RadioButton { Text = "UDP", Location = new Point(70, 18), Width = 60 };
-            _gbProtocol.Controls.Add(_rbTcp);
-            _gbProtocol.Controls.Add(_rbUdp);
+            // Server protocol checkboxes and client protocol radio buttons are placed inside their panels below
 
             // Server panel
-            _gbServer = new GroupBox { Location = new Point(12, 63), Size = new Size(580, 135) };
+            _gbServer = new GroupBox { Location = new Point(12, 60), Size = new Size(580, 155) };
             _lblBind = new Label { Location = new Point(15, 28), Width = 70, TextAlign = ContentAlignment.MiddleRight };
             _cmbBind = new ComboBox { Location = new Point(90, 24), Width = 125, DropDownStyle = ComboBoxStyle.DropDownList };
             _lblPortS = new Label { Location = new Point(220, 28), Width = 50, TextAlign = ContentAlignment.MiddleRight };
             _txtPortS = new TextBox { Text = "8080", Location = new Point(275, 25), Width = 55 };
+            _chkServerTcp = new CheckBox { Text = "TCP", Location = new Point(340, 23), Width = 50, Checked = true };
+            _chkServerUdp = new CheckBox { Text = "UDP", Location = new Point(392, 23), Width = 55 };
             _lblSaveDir = new Label { Location = new Point(15, 63), Width = 60, TextAlign = ContentAlignment.MiddleRight };
             _txtSaveDir = new TextBox { Text = Environment.GetFolderPath(Environment.SpecialFolder.Desktop), Location = new Point(80, 60), Width = 390 };
             _btnBrowseDir = new Button { Location = new Point(475, 59), Width = 85 };
@@ -126,6 +125,8 @@ namespace TrFileTransfer
             _gbServer.Controls.Add(_cmbBind);
             _gbServer.Controls.Add(_lblPortS);
             _gbServer.Controls.Add(_txtPortS);
+            _gbServer.Controls.Add(_chkServerTcp);
+            _gbServer.Controls.Add(_chkServerUdp);
             _gbServer.Controls.Add(_lblSaveDir);
             _gbServer.Controls.Add(_txtSaveDir);
             _gbServer.Controls.Add(_btnBrowseDir);
@@ -133,27 +134,31 @@ namespace TrFileTransfer
             _gbServer.Controls.Add(_btnStopServer);
 
             // Client panel
-            _gbClient = new GroupBox { Location = new Point(12, 206), Size = new Size(580, 135) };
+            _gbClient = new GroupBox { Location = new Point(12, 223), Size = new Size(580, 150) };
             _lblServerIp = new Label { Location = new Point(15, 28), Width = 90, TextAlign = ContentAlignment.MiddleRight };
-            _txtServerIp = new TextBox { Text = "127.0.0.1", Location = new Point(110, 25), Width = 105 };
-            _lblPortC = new Label { Location = new Point(222, 28), Width = 50, TextAlign = ContentAlignment.MiddleRight };
-            _txtPortC = new TextBox { Text = "8080", Location = new Point(277, 25), Width = 60 };
-            _lblFile = new Label { Location = new Point(15, 60), Width = 48, TextAlign = ContentAlignment.MiddleRight };
-            _txtFile = new TextBox { Location = new Point(68, 57), Width = 290 };
-            _btnBrowseFile = new Button { Location = new Point(365, 56), Width = 80 };
+            _txtServerIp = new TextBox { Text = "127.0.0.1", Location = new Point(110, 25), Width = 95 };
+            _lblPortC = new Label { Location = new Point(212, 28), Width = 50, TextAlign = ContentAlignment.MiddleRight };
+            _txtPortC = new TextBox { Text = "8080", Location = new Point(267, 25), Width = 55 };
+            _rbClientTcp = new RadioButton { Text = "TCP", Location = new Point(335, 23), Width = 50, Checked = true };
+            _rbClientUdp = new RadioButton { Text = "UDP", Location = new Point(387, 23), Width = 55 };
+            _btnSend = new Button { Location = new Point(455, 20), Width = 110, Height = 30 };
+            _btnSend.Click += BtnSend_Click;
+            _lblFile = new Label { Location = new Point(15, 63), Width = 48, TextAlign = ContentAlignment.MiddleRight };
+            _txtFile = new TextBox { Location = new Point(68, 60), Width = 290 };
+            _btnBrowseFile = new Button { Location = new Point(365, 59), Width = 80 };
             _btnBrowseFile.Click += BtnBrowseFile_Click;
             _chkFolder = new CheckBox { Location = new Point(350, 28), Width = 95, TextAlign = ContentAlignment.MiddleLeft };
             _chkFolder.CheckedChanged += ChkFolder_CheckedChanged;
-            _chkMonitor = new CheckBox { Location = new Point(70, 85), Width = 100, TextAlign = ContentAlignment.MiddleLeft };
+            _chkMonitor = new CheckBox { Location = new Point(70, 95), Width = 100, TextAlign = ContentAlignment.MiddleLeft };
             _chkMonitor.CheckedChanged += ChkMonitor_CheckedChanged;
-            _btnSend = new Button { Location = new Point(455, 24), Width = 110, Height = 30 };
-            _btnSend.Click += BtnSend_Click;
             _btnCancel = new Button { Location = new Point(455, 56), Width = 110, Height = 30, Enabled = false };
             _btnCancel.Click += BtnCancel_Click;
             _gbClient.Controls.Add(_lblServerIp);
             _gbClient.Controls.Add(_txtServerIp);
             _gbClient.Controls.Add(_lblPortC);
             _gbClient.Controls.Add(_txtPortC);
+            _gbClient.Controls.Add(_rbClientTcp);
+            _gbClient.Controls.Add(_rbClientUdp);
             _gbClient.Controls.Add(_lblFile);
             _gbClient.Controls.Add(_txtFile);
             _gbClient.Controls.Add(_btnBrowseFile);
@@ -163,7 +168,7 @@ namespace TrFileTransfer
             _gbClient.Controls.Add(_btnCancel);
 
             // Server progress panel
-            _gbProgressS = new GroupBox { Location = new Point(12, 349), Size = new Size(286, 205) };
+            _gbProgressS = new GroupBox { Location = new Point(12, 381), Size = new Size(286, 205) };
             _progressPanelS = new FlowLayoutPanel
             {
                 Location = new Point(5, 14), Width = 274, Height = 170,
@@ -175,7 +180,7 @@ namespace TrFileTransfer
             _gbProgressS.Controls.Add(_lblStatusS);
 
             // Client progress panel
-            _gbProgressC = new GroupBox { Location = new Point(306, 349), Size = new Size(286, 205) };
+            _gbProgressC = new GroupBox { Location = new Point(306, 381), Size = new Size(286, 205) };
             _progressPanelC = new FlowLayoutPanel
             {
                 Location = new Point(5, 14), Width = 274, Height = 170,
@@ -187,12 +192,11 @@ namespace TrFileTransfer
             _gbProgressC.Controls.Add(_lblStatusC);
 
             // Log panel
-            _gbLog = new GroupBox { Location = new Point(12, 564), Size = new Size(580, 170) };
+            _gbLog = new GroupBox { Location = new Point(12, 596), Size = new Size(580, 170) };
             _lstLog = new ListBox { Location = new Point(10, 20), Width = 555, Height = 140, IntegralHeight = false, Font = new Font("Consolas", 8.5f) };
             _gbLog.Controls.Add(_lstLog);
 
             Controls.Add(_cmbLang);
-            Controls.Add(_gbProtocol);
             Controls.Add(_gbServer);
             Controls.Add(_gbClient);
             Controls.Add(_gbProgressS);
@@ -209,7 +213,6 @@ namespace TrFileTransfer
         private void ApplyLanguage()
         {
             Text = L.AppTitle;
-            _gbProtocol.Text = L.ProtocolGroup;
 
             _gbServer.Text = L.ServerSettings;
             _lblBind.Text = L.BindAddress;
@@ -243,9 +246,11 @@ namespace TrFileTransfer
             _cmbLang.SelectedIndex = Config.Get("Language", "English") == "中文" ? 1 : 0;
 
             // Protocol
-            string proto = Config.Get("Protocol", "TCP");
-            _rbTcp.Checked = proto != "UDP";
-            _rbUdp.Checked = proto == "UDP";
+            _chkServerTcp.Checked = Config.GetBool("ServerTCP", true);
+            _chkServerUdp.Checked = Config.GetBool("ServerUDP", false);
+            string clientProto = Config.Get("ClientProtocol", "TCP");
+            _rbClientTcp.Checked = clientProto != "UDP";
+            _rbClientUdp.Checked = clientProto == "UDP";
 
             // Server
             _txtPortS.Text = Config.Get("ServerPort", "8080");
@@ -270,7 +275,9 @@ namespace TrFileTransfer
         private void SaveConfig()
         {
             Config.Set("Language", _cmbLang.SelectedIndex == 1 ? "中文" : "English");
-            Config.Set("Protocol", _rbUdp.Checked ? "UDP" : "TCP");
+            Config.SetBool("ServerTCP", _chkServerTcp.Checked);
+            Config.SetBool("ServerUDP", _chkServerUdp.Checked);
+            Config.Set("ClientProtocol", _rbClientUdp.Checked ? "UDP" : "TCP");
             Config.Set("ServerPort", _txtPortS.Text.Trim());
             Config.Set("SaveDir", _txtSaveDir.Text.Trim());
             Config.Set("ServerBind", _cmbBind.SelectedItem != null ? _cmbBind.SelectedItem.ToString() : "");
@@ -390,39 +397,50 @@ namespace TrFileTransfer
             if (string.IsNullOrWhiteSpace(bindAddr))
                 bindAddr = "0.0.0.0";
 
-            DisableServerInputs();
-
-            if (_rbTcp.Checked)
+            if (!_chkServerTcp.Checked && !_chkServerUdp.Checked)
             {
-                _server = new TransferServer(bindAddr, port, saveDir);
-                _server.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
-                _server.OnError += msg => this.Invoke((Action)(() => _lblStatusS.Text = L.ErrorPrefix + msg));
-                _server.OnClientConnected += ep => this.Invoke((Action)(() => { }));
-                _server.OnClientProgress += (ep, p) => this.Invoke((Action)(() =>
+                MessageBox.Show(L.NoProtocolSelected, L.DlgError, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            DisableServerInputs();
+            _serverCount = 0;
+
+            if (_chkServerTcp.Checked)
+            {
+                _serverCount++;
+                var tcpServer = new TransferServer(bindAddr, port, saveDir);
+                tcpServer.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
+                tcpServer.OnError += msg => this.Invoke((Action)(() => _lblStatusS.Text = L.ErrorPrefix + msg));
+                tcpServer.OnClientConnected += ep => this.Invoke((Action)(() => { }));
+                tcpServer.OnClientProgress += (ep, p) => this.Invoke((Action)(() =>
                 {
                     var card = GetOrCreateTcpCard(ep);
                     UpdateCardProgress(card, p);
                 }));
-                _server.OnClientTransferComplete += ep => this.Invoke((Action)(() =>
+                tcpServer.OnClientTransferComplete += ep => this.Invoke((Action)(() =>
                 {
                     Panel card;
                     if (_tcpCards.TryGetValue(ep, out card)) { UpdateCardComplete(card); _tcpCards.Remove(ep); }
                 }));
-                _server.OnTransferComplete += () => this.Invoke((Action)(() =>
+                tcpServer.OnTransferComplete += () => this.Invoke((Action)(() =>
                 {
                     _lblStatusS.Text = L.Listening;
                 }));
-                _server.OnStarted += () => this.Invoke((Action)(() => OnServerStarted()));
-                _server.OnStopped += () => this.Invoke((Action)(() =>
+                tcpServer.OnStarted += () => this.Invoke((Action)(() => OnServerStarted()));
+                tcpServer.OnStopped += () => this.Invoke((Action)(() =>
                 {
                     foreach (var c in _tcpCards.Values) UpdateCardComplete(c);
                     _tcpCards.Clear();
                     OnServerStopped();
                 }));
-                _server.Start();
+                _server = tcpServer;
+                tcpServer.Start();
             }
-            else
+
+            if (_chkServerUdp.Checked)
             {
+                _serverCount++;
                 _serverUdp = new TransferUdpServer(port, saveDir);
                 _serverUdp.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
                 _serverUdp.OnSessionStarted += session => this.Invoke((Action)(() =>
@@ -445,8 +463,8 @@ namespace TrFileTransfer
 
         private void DisableServerInputs()
         {
-            _rbTcp.Enabled = false;
-            _rbUdp.Enabled = false;
+            _chkServerTcp.Enabled = false;
+            _chkServerUdp.Enabled = false;
             _cmbLang.Enabled = false;
             _cmbBind.Enabled = false;
             _txtPortS.Enabled = false;
@@ -458,8 +476,8 @@ namespace TrFileTransfer
         {
             _btnStartServer.Enabled = true;
             _btnStopServer.Enabled = false;
-            _rbTcp.Enabled = true;
-            _rbUdp.Enabled = true;
+            _chkServerTcp.Enabled = true;
+            _chkServerUdp.Enabled = true;
             _cmbLang.Enabled = true;
             _cmbBind.Enabled = true;
             _txtPortS.Enabled = true;
@@ -471,8 +489,8 @@ namespace TrFileTransfer
         {
             _btnSend.Enabled = false;
             _btnCancel.Enabled = true;
-            _rbTcp.Enabled = false;
-            _rbUdp.Enabled = false;
+            _rbClientTcp.Enabled = false;
+            _rbClientUdp.Enabled = false;
             _cmbLang.Enabled = false;
             _txtServerIp.Enabled = false;
             _txtPortC.Enabled = false;
@@ -491,6 +509,8 @@ namespace TrFileTransfer
 
         private void OnServerStopped()
         {
+            _serverCount--;
+            if (_serverCount > 0) return; // still have other servers running
             EnableServerInputs();
             _lblStatusS.Text = L.ServerStopped;
         }
@@ -555,7 +575,7 @@ namespace TrFileTransfer
 
             DisableClientInputs();
 
-            if (_rbTcp.Checked)
+            if (_rbClientTcp.Checked)
             {
                 _client = new TransferClient(ip, port, path);
                 WireClientEvents(_client);
@@ -637,10 +657,10 @@ namespace TrFileTransfer
             _btnCancel.Enabled = false;
             if (!_btnStopServer.Enabled)
             {
-                _rbTcp.Enabled = true;
-                _rbUdp.Enabled = true;
                 _cmbLang.Enabled = true;
             }
+            _rbClientTcp.Enabled = true;
+            _rbClientUdp.Enabled = true;
             _txtServerIp.Enabled = true;
             _txtPortC.Enabled = true;
             _txtFile.Enabled = true;
@@ -824,7 +844,7 @@ namespace TrFileTransfer
                 var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>();
 
                 var card = (Panel)this.Invoke((Func<Panel>)(() => CreateTransferCard(_progressPanelC)));
-                if (_rbTcp.Checked)
+                if (_rbClientTcp.Checked)
                 {
                     var client = new TransferClient(ip, port, filePath);
                     client.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
