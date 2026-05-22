@@ -31,6 +31,7 @@ namespace TrFileTransfer
     }
 
     /// <summary>Tracks received chunks for concurrent file reassembly.</summary>
+    #pragma warning disable 1591
     public class ChunkTracker
     {
         public string FileName;
@@ -48,6 +49,7 @@ namespace TrFileTransfer
             try { if (WriteStream != null) { WriteStream.Dispose(); WriteStream = null; } } catch { }
         }
     }
+    #pragma warning restore 1591
 
     /// <summary>General-purpose utility helpers.</summary>
     public static class Utils

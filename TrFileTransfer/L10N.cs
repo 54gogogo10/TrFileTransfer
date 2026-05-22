@@ -152,6 +152,12 @@ namespace TrFileTransfer
                 ? string.Format("哈希验证失败: {0}", fileName)
                 : string.Format("Hash verification FAILED for {0}", fileName);
         }
+        public static string S_ChunkOk(string fileName, long offset, string sizeStr, int chunksDone)
+        {
+            return IsChinese
+                ? string.Format("分块 OK: {0} offset={1} size={2} [{3}]", fileName, offset, sizeStr, chunksDone)
+                : string.Format("Chunk OK: {0} offset={1} size={2} [{3}]", fileName, offset, sizeStr, chunksDone);
+        }
         public static string S_TransferDone(string fileName, string sizeStr, double secs, string speedStr)
         {
             return IsChinese

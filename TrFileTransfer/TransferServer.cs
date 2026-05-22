@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -18,6 +19,8 @@ namespace TrFileTransfer
         private readonly string _saveDirectory;
         private readonly int _bufferSize;
         private volatile bool _isRunning;
+        private readonly ConcurrentDictionary<string, ChunkTracker> _chunkTrackers
+            = new ConcurrentDictionary<string, ChunkTracker>();
 
         /// <summary>Fired for every log message.</summary>
         public event Action<string> OnLog;
@@ -163,17 +166,26 @@ namespace TrFileTransfer
                     await ReadExactAsync(stream, typeBuf, 0, 1, ct);
                     byte transferType = typeBuf[0];
 
+                    bool isChunked = false;
                     if (transferType == 0x01)
                     {
                         await HandleFolderTransfer(stream, ct);
+                    }
+                    else if (transferType == 0x02)
+                    {
+                        isChunked = true;
+                        await HandleChunkedFile(stream, ct);
                     }
                     else
                     {
                         await HandleFileTransfer(stream, ct);
                     }
 
-                    var ccHandler = OnClientTransferComplete;
-                    if (ccHandler != null) ccHandler(clientEp);
+                    if (!isChunked)
+                    {
+                        var ccHandler = OnClientTransferComplete;
+                        if (ccHandler != null) ccHandler(clientEp);
+                    }
                 }
                 catch (OperationCanceledException) { }
                 catch (ObjectDisposedException) { }
@@ -235,6 +247,101 @@ namespace TrFileTransfer
 
             var completeHandler = OnTransferComplete;
             if (completeHandler != null) completeHandler();
+        }
+
+        private async Task HandleChunkedFile(NetworkStream stream, CancellationToken ct)
+        {
+            var headerBuf = new byte[28]; // totalSize(8) + chunkOffset(8) + chunkSize(8) + nameLen(4)
+            await ReadExactAsync(stream, headerBuf, 0, 28, ct);
+
+            long totalSize = BitConverter.ToInt64(headerBuf, 0);
+            long chunkOffset = BitConverter.ToInt64(headerBuf, 8);
+            long chunkSize = BitConverter.ToInt64(headerBuf, 16);
+            int nameLen = BitConverter.ToInt32(headerBuf, 24);
+
+            if (totalSize <= 0 || chunkOffset < 0 || chunkSize <= 0 || nameLen <= 0 || nameLen > 4096)
+            {
+                Log(L.S_InvalidHeader(totalSize, nameLen));
+                return;
+            }
+
+            var nameBuf = new byte[nameLen];
+            await ReadExactAsync(stream, nameBuf, 0, nameLen, ct);
+            string fileName = System.Text.Encoding.UTF8.GetString(nameBuf);
+            fileName = Path.GetFileName(fileName);
+            if (string.IsNullOrWhiteSpace(fileName))
+                fileName = L.S_ReceivedFile;
+
+            // Get or create chunk tracker
+            ChunkTracker tracker = _chunkTrackers.GetOrAdd(fileName, key =>
+            {
+                var t = new ChunkTracker
+                {
+                    FileName = key,
+                    TotalSize = totalSize,
+                    SavePath = Utils.GetUniqueSavePath(_saveDirectory, key)
+                };
+                t.WriteStream = new FileStream(t.SavePath, FileMode.Create, FileAccess.Write,
+                    FileShare.None, _bufferSize, FileOptions.RandomAccess);
+                t.WriteStream.SetLength(totalSize);
+                return t;
+            });
+
+            // Read chunk data and hash
+            var chunkData = new byte[chunkSize];
+            await ReadExactAsync(stream, chunkData, 0, (int)chunkSize, ct);
+
+            var receivedHash = new byte[32];
+            await ReadExactAsync(stream, receivedHash, 0, 32, ct);
+
+            bool hashOk;
+            using (var sha256 = SHA256.Create())
+            {
+                var computedHash = sha256.ComputeHash(chunkData);
+                hashOk = Utils.ConstantTimeEquals(receivedHash, computedHash);
+            }
+
+            if (hashOk)
+            {
+                lock (tracker.Lock)
+                {
+                    tracker.WriteStream.Seek(chunkOffset, SeekOrigin.Begin);
+                    tracker.WriteStream.Write(chunkData, 0, (int)chunkSize);
+                    tracker.BytesReceived += chunkSize;
+                    tracker.ChunksCompleted++;
+                }
+
+                Log(L.S_ChunkOk(fileName, chunkOffset, Utils.FormatSize(chunkSize),
+                    tracker.ChunksCompleted));
+
+                // Check completion
+                bool isComplete = false;
+                lock (tracker.Lock)
+                {
+                    if (tracker.BytesReceived >= tracker.TotalSize && !tracker.Complete)
+                    {
+                        tracker.Complete = true;
+                        isComplete = true;
+                    }
+                }
+
+                if (isComplete)
+                {
+                    tracker.Dispose();
+                    ChunkTracker removed;
+                    _chunkTrackers.TryRemove(fileName, out removed);
+                    Log(L.S_TransferDone(fileName, Utils.FormatSize(totalSize), 0.0, ""));
+                    var completeHandler = OnTransferComplete;
+                    if (completeHandler != null) completeHandler();
+
+                }
+            }
+            else
+            {
+                Log(L.S_HashFailed(fileName));
+                var errHandler = OnError;
+                if (errHandler != null) errHandler(L.S_HashFailed(fileName));
+            }
         }
 
         private async Task HandleFolderTransfer(NetworkStream stream, CancellationToken ct)
