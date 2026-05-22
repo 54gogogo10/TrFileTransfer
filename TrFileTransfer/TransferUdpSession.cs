@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -83,12 +84,38 @@ namespace TrFileTransfer
 
             if (bodyLen < 11) return;
             byte transferType = helloPacket[UdpProtocol.HeaderSize];
-            long fileSize = BitConverter.ToInt64(helloPacket, UdpProtocol.HeaderSize + 1);
-            int nameLen = BitConverter.ToInt16(helloPacket, UdpProtocol.HeaderSize + 9);
-            if (fileSize < 0 || nameLen <= 0 || nameLen > 4096) return;
-            if (UdpProtocol.HeaderSize + 11 + nameLen > helloPacket.Length) return;
 
-            string fileName = System.Text.Encoding.UTF8.GetString(helloPacket, UdpProtocol.HeaderSize + 11, nameLen);
+            // Chunked file (type 0x02): totalSize(8) + chunkOffset(8) + chunkSize(8) + nameLen(2) + name
+            long chunkOffset = 0;
+            long totalFileSize = 0;
+            bool isChunked = (transferType == 0x02);
+
+            long fileSize;
+            int nameLen;
+            string fileName;
+
+            if (isChunked)
+            {
+                if (bodyLen < 27) return;
+                totalFileSize = BitConverter.ToInt64(helloPacket, UdpProtocol.HeaderSize + 1);
+                chunkOffset = BitConverter.ToInt64(helloPacket, UdpProtocol.HeaderSize + 9);
+                fileSize = BitConverter.ToInt64(helloPacket, UdpProtocol.HeaderSize + 17);
+                nameLen = BitConverter.ToInt16(helloPacket, UdpProtocol.HeaderSize + 25);
+                if (totalFileSize <= 0 || chunkOffset < 0 || fileSize <= 0 || nameLen <= 0 || nameLen > 4096) return;
+                if (UdpProtocol.HeaderSize + 27 + nameLen > helloPacket.Length) return;
+                fileName = System.Text.Encoding.UTF8.GetString(helloPacket, UdpProtocol.HeaderSize + 27, nameLen);
+                fileName = Path.GetFileName(fileName);
+                if (string.IsNullOrWhiteSpace(fileName))
+                    fileName = "received_file";
+            }
+            else
+            {
+                fileSize = BitConverter.ToInt64(helloPacket, UdpProtocol.HeaderSize + 1);
+                nameLen = BitConverter.ToInt16(helloPacket, UdpProtocol.HeaderSize + 9);
+                if (fileSize < 0 || nameLen <= 0 || nameLen > 4096) return;
+                if (UdpProtocol.HeaderSize + 11 + nameLen > helloPacket.Length) return;
+                fileName = System.Text.Encoding.UTF8.GetString(helloPacket, UdpProtocol.HeaderSize + 11, nameLen);
+            }
             bool isFolderFile = (transferType == 0x01);
 
             string savePath;
@@ -265,6 +292,7 @@ namespace TrFileTransfer
                                         if (errHandler != null) errHandler(L.S_HashFailed(fileName));
                                         return;
                                     }
+
                                 }
                                 else
                                 {
@@ -311,16 +339,78 @@ namespace TrFileTransfer
             if (!finProcessed) return;
 
             sw.Stop();
-            Log(L.S_TransferDone(fileName, Utils.FormatSize(fileSize),
-                sw.Elapsed.TotalSeconds,
-                Utils.FormatSize((long)(fileSize / Math.Max(sw.Elapsed.TotalSeconds, 0.001)))));
 
-            if (!isFolderFile)
+            if (isChunked)
             {
-                var completeHandler = OnTransferComplete;
-                if (completeHandler != null) completeHandler();
+                // Copy chunk data from temp file to ChunkTracker
+                try
+                {
+                    byte[] chunkData = File.ReadAllBytes(savePath);
+                    try { File.Delete(savePath); } catch { }
+
+                    var tracker = _chunkTrackers.GetOrAdd(fileName, key =>
+                    {
+                        var t = new ChunkTracker
+                        {
+                            FileName = key,
+                            TotalSize = totalFileSize,
+                            SavePath = Utils.GetUniqueSavePath(_saveDirectory, key)
+                        };
+                        t.WriteStream = new FileStream(t.SavePath, FileMode.Create, FileAccess.Write,
+                            FileShare.None, 4096, FileOptions.RandomAccess);
+                        t.WriteStream.SetLength(totalFileSize);
+                        return t;
+                    });
+
+                    lock (tracker.Lock)
+                    {
+                        tracker.WriteStream.Seek(chunkOffset, SeekOrigin.Begin);
+                        tracker.WriteStream.Write(chunkData, 0, chunkData.Length);
+                        tracker.BytesReceived += chunkData.Length;
+                        tracker.ChunksCompleted++;
+                    }
+
+                    bool isComplete = false;
+                    lock (tracker.Lock)
+                    {
+                        if (tracker.BytesReceived >= tracker.TotalSize && !tracker.Complete)
+                        {
+                            tracker.Complete = true;
+                            isComplete = true;
+                        }
+                    }
+
+                    if (isComplete)
+                    {
+                        tracker.Dispose();
+                        ChunkTracker removed;
+                        _chunkTrackers.TryRemove(fileName, out removed);
+                        Log(L.S_TransferDone(fileName, Utils.FormatSize(totalFileSize), 0, ""));
+                        var completeHandler = OnTransferComplete;
+                        if (completeHandler != null) completeHandler();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log(L.S_HashFailed(fileName + ": " + ex.Message));
+                }
+            }
+            else
+            {
+                Log(L.S_TransferDone(fileName, Utils.FormatSize(fileSize),
+                    sw.Elapsed.TotalSeconds,
+                    Utils.FormatSize((long)(fileSize / Math.Max(sw.Elapsed.TotalSeconds, 0.001)))));
+
+                if (!isFolderFile)
+                {
+                    var completeHandler = OnTransferComplete;
+                    if (completeHandler != null) completeHandler();
+                }
             }
         }
+
+        private static readonly ConcurrentDictionary<string, ChunkTracker> _chunkTrackers
+            = new ConcurrentDictionary<string, ChunkTracker>();
 
         private void Log(string msg)
         {
