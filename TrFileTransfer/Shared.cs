@@ -103,17 +103,26 @@ namespace TrFileTransfer
             return string.Join(Path.DirectorySeparatorChar.ToString(), parts);
         }
 
-        /// <summary>Finds a free TCP port starting from basePort, scanning upward.</summary>
-        public static int FindFreePort(int basePort)
+        /// <summary>Finds a free port starting from basePort, scanning upward.</summary>
+        public static int FindFreePort(int basePort, bool isUdp = false)
         {
             for (int port = basePort; port < basePort + 128; port++)
             {
                 try
                 {
-                    var listener = new TcpListener(System.Net.IPAddress.Loopback, port);
-                    listener.Start();
-                    listener.Stop();
-                    return port;
+                    if (isUdp)
+                    {
+                        var udp = new UdpClient(port);
+                        udp.Close();
+                        return port;
+                    }
+                    else
+                    {
+                        var listener = new TcpListener(System.Net.IPAddress.Loopback, port);
+                        listener.Start();
+                        listener.Stop();
+                        return port;
+                    }
                 }
                 catch { }
             }

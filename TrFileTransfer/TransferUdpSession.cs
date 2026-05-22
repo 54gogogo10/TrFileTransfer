@@ -31,11 +31,15 @@ namespace TrFileTransfer
 
         public bool IsRunning { get; private set; }
 
-        public TransferUdpSession(UdpClient udp, IPEndPoint clientEp, string saveDirectory)
+        private readonly ConcurrentDictionary<string, ChunkTracker> _chunkTrackers;
+
+        public TransferUdpSession(UdpClient udp, IPEndPoint clientEp, string saveDirectory,
+            ConcurrentDictionary<string, ChunkTracker> chunkTrackers = null)
         {
             _udp = udp;
             _clientEp = clientEp;
             _saveDirectory = saveDirectory;
+            _chunkTrackers = chunkTrackers ?? new ConcurrentDictionary<string, ChunkTracker>();
         }
 
         public bool EnqueuePacket(byte[] packet)
@@ -348,31 +352,33 @@ namespace TrFileTransfer
                     byte[] chunkData = File.ReadAllBytes(savePath);
                     try { File.Delete(savePath); } catch { }
 
-                    var tracker = _chunkTrackers.GetOrAdd(fileName, key =>
+                    ChunkTracker tracker;
+                    if (!_chunkTrackers.TryGetValue(fileName, out tracker))
                     {
-                        var t = new ChunkTracker
+                        var newTracker = new ChunkTracker
                         {
-                            FileName = key,
+                            FileName = fileName,
                             TotalSize = totalFileSize,
-                            SavePath = Utils.GetUniqueSavePath(_saveDirectory, key)
+                            SavePath = Utils.GetUniqueSavePath(_saveDirectory, fileName)
                         };
-                        t.WriteStream = new FileStream(t.SavePath, FileMode.Create, FileAccess.Write,
-                            FileShare.None, 4096, FileOptions.RandomAccess);
-                        t.WriteStream.SetLength(totalFileSize);
-                        return t;
-                    });
+                        tracker = _chunkTrackers.GetOrAdd(fileName, newTracker);
+                    }
 
+                    // Single lock: open stream + write + completion check
+                    bool isComplete = false;
                     lock (tracker.Lock)
                     {
+                        if (tracker.WriteStream == null)
+                        {
+                            tracker.WriteStream = new FileStream(tracker.SavePath, FileMode.Create,
+                                FileAccess.Write, FileShare.None, 4096, FileOptions.RandomAccess);
+                            tracker.WriteStream.SetLength(tracker.TotalSize);
+                        }
                         tracker.WriteStream.Seek(chunkOffset, SeekOrigin.Begin);
                         tracker.WriteStream.Write(chunkData, 0, chunkData.Length);
                         tracker.BytesReceived += chunkData.Length;
                         tracker.ChunksCompleted++;
-                    }
 
-                    bool isComplete = false;
-                    lock (tracker.Lock)
-                    {
                         if (tracker.BytesReceived >= tracker.TotalSize && !tracker.Complete)
                         {
                             tracker.Complete = true;
@@ -408,9 +414,6 @@ namespace TrFileTransfer
                 }
             }
         }
-
-        private static readonly ConcurrentDictionary<string, ChunkTracker> _chunkTrackers
-            = new ConcurrentDictionary<string, ChunkTracker>();
 
         private void Log(string msg)
         {

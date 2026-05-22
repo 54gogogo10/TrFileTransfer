@@ -98,6 +98,7 @@ namespace TrFileTransfer
                 Log(L.C_Error(ex.Message));
                 var handler = OnError;
                 if (handler != null) handler(ex.Message);
+                throw;
             }
             finally
             {

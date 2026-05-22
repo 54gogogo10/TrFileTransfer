@@ -108,6 +108,13 @@ namespace TrFileTransfer
             }
             catch { }
 
+            // Clean up any incomplete chunk trackers
+            foreach (var kv in _chunkTrackers)
+            {
+                try { kv.Value.Dispose(); } catch { }
+            }
+            _chunkTrackers.Clear();
+
             var handler = OnStopped;
             if (handler != null) handler();
 
@@ -272,20 +279,25 @@ namespace TrFileTransfer
             if (string.IsNullOrWhiteSpace(fileName))
                 fileName = L.S_ReceivedFile;
 
-            // Get or create chunk tracker
-            ChunkTracker tracker = _chunkTrackers.GetOrAdd(fileName, key =>
+            // Validate chunk size
+            if (chunkSize > 1073741824L) // 1 GB sanity cap
             {
-                var t = new ChunkTracker
+                Log(L.S_InvalidHeader(totalSize, (int)chunkSize));
+                return;
+            }
+
+            // Get or create chunk tracker (defer FileStream to write phase)
+            ChunkTracker tracker;
+            if (!_chunkTrackers.TryGetValue(fileName, out tracker))
+            {
+                var newTracker = new ChunkTracker
                 {
-                    FileName = key,
+                    FileName = fileName,
                     TotalSize = totalSize,
-                    SavePath = Utils.GetUniqueSavePath(_saveDirectory, key)
+                    SavePath = Utils.GetUniqueSavePath(_saveDirectory, fileName)
                 };
-                t.WriteStream = new FileStream(t.SavePath, FileMode.Create, FileAccess.Write,
-                    FileShare.None, _bufferSize, FileOptions.RandomAccess);
-                t.WriteStream.SetLength(totalSize);
-                return t;
-            });
+                tracker = _chunkTrackers.GetOrAdd(fileName, newTracker);
+            }
 
             // Read chunk data and hash
             var chunkData = new byte[chunkSize];
@@ -303,27 +315,30 @@ namespace TrFileTransfer
 
             if (hashOk)
             {
+                // Single lock: open stream + write + completion check
+                bool isComplete = false;
                 lock (tracker.Lock)
                 {
+                    if (tracker.WriteStream == null)
+                    {
+                        tracker.WriteStream = new FileStream(tracker.SavePath, FileMode.Create,
+                            FileAccess.Write, FileShare.None, _bufferSize, FileOptions.RandomAccess);
+                        tracker.WriteStream.SetLength(tracker.TotalSize);
+                    }
                     tracker.WriteStream.Seek(chunkOffset, SeekOrigin.Begin);
                     tracker.WriteStream.Write(chunkData, 0, (int)chunkSize);
                     tracker.BytesReceived += chunkSize;
                     tracker.ChunksCompleted++;
-                }
 
-                Log(L.S_ChunkOk(fileName, chunkOffset, Utils.FormatSize(chunkSize),
-                    tracker.ChunksCompleted));
-
-                // Check completion
-                bool isComplete = false;
-                lock (tracker.Lock)
-                {
                     if (tracker.BytesReceived >= tracker.TotalSize && !tracker.Complete)
                     {
                         tracker.Complete = true;
                         isComplete = true;
                     }
                 }
+
+                Log(L.S_ChunkOk(fileName, chunkOffset, Utils.FormatSize(chunkSize),
+                    tracker.ChunksCompleted));
 
                 if (isComplete)
                 {
@@ -333,7 +348,6 @@ namespace TrFileTransfer
                     Log(L.S_TransferDone(fileName, Utils.FormatSize(totalSize), 0.0, ""));
                     var completeHandler = OnTransferComplete;
                     if (completeHandler != null) completeHandler();
-
                 }
             }
             else

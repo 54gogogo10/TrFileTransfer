@@ -20,6 +20,8 @@ namespace TrFileTransfer
         private volatile bool _isRunning;
         private readonly ConcurrentDictionary<IPEndPoint, TransferUdpSession> _sessions
             = new ConcurrentDictionary<IPEndPoint, TransferUdpSession>();
+        private readonly ConcurrentDictionary<string, ChunkTracker> _chunkTrackers
+            = new ConcurrentDictionary<string, ChunkTracker>();
 
         /// <summary>Fired for every log message.</summary>
         public event Action<string> OnLog;
@@ -108,7 +110,7 @@ namespace TrFileTransfer
                         bool isNew = false;
                         if (!_sessions.TryGetValue(clientEp, out session))
                         {
-                            session = new TransferUdpSession(_udp, clientEp, _saveDirectory);
+                            session = new TransferUdpSession(_udp, clientEp, _saveDirectory, _chunkTrackers);
                             session.OnLog += msg => Utils.LogTo(OnLog, msg);
                             session.OnError += msg => Utils.LogTo(OnLog, msg);
                             session.OnStopped += () =>

@@ -154,22 +154,30 @@ namespace TrFileTransfer
         private async Task SendChunkAsync(long offset, long size, long totalSize,
             int localPort, int index, CancellationToken ct)
         {
-            if (_isUdp)
+            try
             {
-                var client = new TransferUdpClient(_serverIp, _port, _filePath, localPort);
-                await client.SendChunkedAsync(offset, size, totalSize);
-            }
-            else
-            {
-                var client = new TransferClient(_serverIp, _port, _filePath, localPort);
-                await client.SendChunkedAsync(offset, size, totalSize);
-            }
+                if (_isUdp)
+                {
+                    var client = new TransferUdpClient(_serverIp, _port, _filePath, localPort);
+                    await client.SendChunkedAsync(offset, size, totalSize);
+                }
+                else
+                {
+                    var client = new TransferClient(_serverIp, _port, _filePath, localPort);
+                    await client.SendChunkedAsync(offset, size, totalSize);
+                }
 
-            lock (_progressLock)
+                lock (_progressLock)
+                {
+                    _transferredBytes += size;
+                    _completedCount++;
+                    ReportProgress(_filePath);
+                }
+            }
+            catch (Exception ex)
             {
-                _transferredBytes += size;
-                _completedCount++;
-                ReportProgress(_filePath);
+                Log(string.Format("Chunk {0} failed: {1}", index, ex.Message));
+                throw;
             }
         }
 
@@ -190,7 +198,7 @@ namespace TrFileTransfer
         private int FindLocalPort(int index)
         {
             int basePort = _port + index + 1;
-            return Utils.FindFreePort(basePort);
+            return Utils.FindFreePort(basePort, _isUdp);
         }
 
         private void ReportProgress(string displayName)
