@@ -357,7 +357,7 @@ namespace TrFileTransfer
                             int bufOff = offset - bufStartSeq * UdpProtocol.MaxChunkSize;
                             if (bufStartSeq < 0 || bufOff < 0 || bufOff + chunkSize > bufDataLen)
                             {
-                                fs.Seek(offset, SeekOrigin.Begin);
+                                fs.Seek(fileOffset + offset, SeekOrigin.Begin);
                                 int toRead = (int)Math.Min(ReadBufSize, fileSize - offset);
                                 int totalRead = 0;
                                 while (totalRead < toRead)

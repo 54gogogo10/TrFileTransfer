@@ -301,7 +301,9 @@ namespace TrFileTransfer
             {
                 if (fileOffset > 0)
                     fileStream.Seek(fileOffset, SeekOrigin.Begin);
-                int read = await fileStream.ReadAsync(bufA, 0, bufA.Length, ct);
+                long totalToSend = fileSize;
+                int firstToRead = (int)Math.Min((long)bufA.Length, totalToSend);
+                int read = await fileStream.ReadAsync(bufA, 0, firstToRead, ct);
                 if (read == 0)
                 {
                     sha256.TransformFinalBlock(Utils.EmptyBytes, 0, 0);
@@ -314,12 +316,21 @@ namespace TrFileTransfer
 
                 while (read > 0 && !ct.IsCancellationRequested)
                 {
-                    var nextReadTask = fileStream.ReadAsync(nxt, 0, nxt.Length, ct);
+                    long soFar = bytesSent + read;
+                    int nextToRead = (int)Math.Min((long)nxt.Length, totalToSend - soFar);
+                    Task<int> nextReadTask = null;
+                    if (nextToRead > 0)
+                        nextReadTask = fileStream.ReadAsync(nxt, 0, nextToRead, ct);
 
                     sha256.TransformBlock(cur, 0, read, null, 0);
                     await stream.WriteAsync(cur, 0, read, ct);
                     bytesSent += read;
 
+                    if (nextReadTask == null)
+                    {
+                        read = 0;
+                        break;
+                    }
                     read = await nextReadTask;
 
                     var tmp = cur; cur = nxt; nxt = tmp;
