@@ -31,6 +31,7 @@ echo.
     ..\TransferUdpServer.cs ^
     ..\TransferClient.cs ^
     ..\TransferUdpClient.cs ^
+    ..\ConcurrentTransfer.cs ^
     TestProgram.cs ^
     IntegrationTests.cs
 

@@ -34,6 +34,7 @@ echo.
     TransferUdpServer.cs ^
     TransferClient.cs ^
     TransferUdpClient.cs ^
+    ConcurrentTransfer.cs ^
     MainForm.cs ^
     Program.cs
 
