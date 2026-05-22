@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Threading;
@@ -15,6 +16,7 @@ namespace TrFileTransfer
         private readonly int _port;
         private readonly string _filePath;
         private readonly int _bufferSize;
+        private readonly int _localPort;
         private volatile bool _isRunning;
 
         /// <summary>Fired for every log message.</summary>
@@ -48,6 +50,13 @@ namespace TrFileTransfer
             _bufferSize = bufferSize;
         }
 
+        /// <summary>Creates a TCP client bound to a specific local port for concurrent transfers.</summary>
+        public TransferClient(string serverIp, int port, string filePath, int localPort, int bufferSize = 1024 * 1024)
+            : this(serverIp, port, filePath, bufferSize)
+        {
+            _localPort = localPort;
+        }
+
         /// <summary>Sends the file specified in the constructor over TCP.</summary>
         public async Task SendAsync()
         {
@@ -59,6 +68,12 @@ namespace TrFileTransfer
         public async Task SendFolderAsync(string folderPath)
         {
             await RunTransfer(ct => SendFolderInternal(folderPath, ct));
+        }
+
+        /// <summary>Sends a chunk of a file (type 0x02) for concurrent transfer.</summary>
+        public async Task SendChunkedAsync(long offset, long chunkSize, long totalSize)
+        {
+            await RunTransfer(ct => SendChunkedInternal(offset, chunkSize, totalSize, ct));
         }
 
         private async Task RunTransfer(Func<CancellationToken, Task> transferAction)
@@ -234,8 +249,45 @@ namespace TrFileTransfer
             }
         }
 
+        private async Task SendChunkedInternal(long offset, long chunkSize, long totalSize, CancellationToken ct)
+        {
+            using (var client = _localPort > 0
+                ? new TcpClient(new IPEndPoint(IPAddress.Any, _localPort))
+                : new TcpClient())
+            {
+                client.NoDelay = true;
+                client.SendBufferSize = _bufferSize;
+                client.ReceiveBufferSize = _bufferSize;
+
+                await client.ConnectAsync(_serverIp, _port);
+                var stream = client.GetStream();
+
+                var fileInfo = new FileInfo(_filePath);
+                string fileName = fileInfo.Name;
+                byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(fileName);
+
+                // Header: type(1) + totalSize(8) + chunkOffset(8) + chunkSize(8) + nameLen(4) + name
+                var header = new byte[1 + 28 + nameBytes.Length];
+                header[0] = 0x02;
+                Buffer.BlockCopy(BitConverter.GetBytes(totalSize), 0, header, 1, 8);
+                Buffer.BlockCopy(BitConverter.GetBytes(offset), 0, header, 9, 8);
+                Buffer.BlockCopy(BitConverter.GetBytes(chunkSize), 0, header, 17, 8);
+                Buffer.BlockCopy(BitConverter.GetBytes(nameBytes.Length), 0, header, 25, 4);
+                Buffer.BlockCopy(nameBytes, 0, header, 29, nameBytes.Length);
+                await stream.WriteAsync(header, 0, header.Length, ct);
+
+                Log(string.Format("Chunk sending: {0} offset={1} size={2}",
+                    fileName, offset, Utils.FormatSize(chunkSize)));
+
+                await SendFilePayload(stream, _filePath, chunkSize, fileName, ct, (int)offset);
+
+                var completeHandler = OnTransferComplete;
+                if (completeHandler != null) completeHandler();
+            }
+        }
+
         private async Task SendFilePayload(NetworkStream stream, string filePath, long fileSize,
-            string displayName, CancellationToken ct)
+            string displayName, CancellationToken ct, int fileOffset = 0)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             long bytesSent = 0;
@@ -247,6 +299,8 @@ namespace TrFileTransfer
             using (var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read,
                 FileShare.Read, _bufferSize, FileOptions.SequentialScan))
             {
+                if (fileOffset > 0)
+                    fileStream.Seek(fileOffset, SeekOrigin.Begin);
                 int read = await fileStream.ReadAsync(bufA, 0, bufA.Length, ct);
                 if (read == 0)
                 {
