@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Net.Sockets;
 
 namespace TrFileTransfer
 {
@@ -27,6 +28,25 @@ namespace TrFileTransfer
         public long Size;
         /// <summary>Relative path within the folder (used by receiver to recreate structure).</summary>
         public string RelativePath;
+    }
+
+    /// <summary>Tracks received chunks for concurrent file reassembly.</summary>
+    public class ChunkTracker
+    {
+        public string FileName;
+        public long TotalSize;
+        public string SavePath;
+        public FileStream WriteStream;
+        public long BytesReceived;
+        public int ChunksCompleted;
+        public readonly object Lock = new object();
+        public bool Complete;
+
+        public void Dispose()
+        {
+            Complete = true;
+            try { if (WriteStream != null) { WriteStream.Dispose(); WriteStream = null; } } catch { }
+        }
     }
 
     /// <summary>General-purpose utility helpers.</summary>
@@ -79,6 +99,23 @@ namespace TrFileTransfer
                     parts[i] = "_";
             }
             return string.Join(Path.DirectorySeparatorChar.ToString(), parts);
+        }
+
+        /// <summary>Finds a free TCP port starting from basePort, scanning upward.</summary>
+        public static int FindFreePort(int basePort)
+        {
+            for (int port = basePort; port < basePort + 128; port++)
+            {
+                try
+                {
+                    var listener = new TcpListener(System.Net.IPAddress.Loopback, port);
+                    listener.Start();
+                    listener.Stop();
+                    return port;
+                }
+                catch { }
+            }
+            return 0; // fallback: let OS assign ephemeral port
         }
 
         /// <summary>Returns a unique file/directory path by appending _1, _2, etc. when collisions exist.</summary>
