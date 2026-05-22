@@ -48,6 +48,51 @@ namespace TrFileTransfer
             Complete = true;
             try { if (WriteStream != null) { WriteStream.Dispose(); WriteStream = null; } } catch { }
         }
+
+        /// <summary>Gets or creates a tracker, deferring FileStream creation.</summary>
+        public static ChunkTracker GetOrCreate(
+            System.Collections.Concurrent.ConcurrentDictionary<string, ChunkTracker> dict,
+            string fileName, long totalSize, string saveDirectory)
+        {
+            ChunkTracker tracker;
+            if (!dict.TryGetValue(fileName, out tracker))
+            {
+                var newTracker = new ChunkTracker
+                {
+                    FileName = fileName,
+                    TotalSize = totalSize,
+                    SavePath = Utils.GetUniqueSavePath(saveDirectory, fileName)
+                };
+                tracker = dict.GetOrAdd(fileName, newTracker);
+            }
+            return tracker;
+        }
+
+        /// <summary>Writes chunk data and checks completion. Returns true if all chunks received.</summary>
+        public bool WriteChunk(long chunkOffset, byte[] data, int bufferSize)
+        {
+            bool isComplete = false;
+            lock (Lock)
+            {
+                if (WriteStream == null)
+                {
+                    WriteStream = new FileStream(SavePath, FileMode.Create,
+                        FileAccess.Write, FileShare.None, bufferSize, FileOptions.RandomAccess);
+                    WriteStream.SetLength(TotalSize);
+                }
+                WriteStream.Seek(chunkOffset, SeekOrigin.Begin);
+                WriteStream.Write(data, 0, data.Length);
+                BytesReceived += data.Length;
+                ChunksCompleted++;
+
+                if (BytesReceived >= TotalSize && !Complete)
+                {
+                    Complete = true;
+                    isComplete = true;
+                }
+            }
+            return isComplete;
+        }
     }
     #pragma warning restore 1591
 

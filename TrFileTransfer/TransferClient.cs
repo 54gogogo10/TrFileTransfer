@@ -263,8 +263,7 @@ namespace TrFileTransfer
                 await client.ConnectAsync(_serverIp, _port);
                 var stream = client.GetStream();
 
-                var fileInfo = new FileInfo(_filePath);
-                string fileName = fileInfo.Name;
+                string fileName = Path.GetFileName(_filePath);
                 byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(fileName);
 
                 // Header: type(1) + totalSize(8) + chunkOffset(8) + chunkSize(8) + nameLen(4) + name

@@ -286,18 +286,8 @@ namespace TrFileTransfer
                 return;
             }
 
-            // Get or create chunk tracker (defer FileStream to write phase)
-            ChunkTracker tracker;
-            if (!_chunkTrackers.TryGetValue(fileName, out tracker))
-            {
-                var newTracker = new ChunkTracker
-                {
-                    FileName = fileName,
-                    TotalSize = totalSize,
-                    SavePath = Utils.GetUniqueSavePath(_saveDirectory, fileName)
-                };
-                tracker = _chunkTrackers.GetOrAdd(fileName, newTracker);
-            }
+            ChunkTracker tracker = ChunkTracker.GetOrCreate(
+                _chunkTrackers, fileName, totalSize, _saveDirectory);
 
             // Read chunk data and hash
             var chunkData = new byte[chunkSize];
@@ -315,27 +305,7 @@ namespace TrFileTransfer
 
             if (hashOk)
             {
-                // Single lock: open stream + write + completion check
-                bool isComplete = false;
-                lock (tracker.Lock)
-                {
-                    if (tracker.WriteStream == null)
-                    {
-                        tracker.WriteStream = new FileStream(tracker.SavePath, FileMode.Create,
-                            FileAccess.Write, FileShare.None, _bufferSize, FileOptions.RandomAccess);
-                        tracker.WriteStream.SetLength(tracker.TotalSize);
-                    }
-                    tracker.WriteStream.Seek(chunkOffset, SeekOrigin.Begin);
-                    tracker.WriteStream.Write(chunkData, 0, (int)chunkSize);
-                    tracker.BytesReceived += chunkSize;
-                    tracker.ChunksCompleted++;
-
-                    if (tracker.BytesReceived >= tracker.TotalSize && !tracker.Complete)
-                    {
-                        tracker.Complete = true;
-                        isComplete = true;
-                    }
-                }
+                bool isComplete = tracker.WriteChunk(chunkOffset, chunkData, _bufferSize);
 
                 Log(L.S_ChunkOk(fileName, chunkOffset, Utils.FormatSize(chunkSize),
                     tracker.ChunksCompleted));

@@ -352,39 +352,10 @@ namespace TrFileTransfer
                     byte[] chunkData = File.ReadAllBytes(savePath);
                     try { File.Delete(savePath); } catch { }
 
-                    ChunkTracker tracker;
-                    if (!_chunkTrackers.TryGetValue(fileName, out tracker))
-                    {
-                        var newTracker = new ChunkTracker
-                        {
-                            FileName = fileName,
-                            TotalSize = totalFileSize,
-                            SavePath = Utils.GetUniqueSavePath(_saveDirectory, fileName)
-                        };
-                        tracker = _chunkTrackers.GetOrAdd(fileName, newTracker);
-                    }
+                    ChunkTracker tracker = ChunkTracker.GetOrCreate(
+                        _chunkTrackers, fileName, totalFileSize, _saveDirectory);
 
-                    // Single lock: open stream + write + completion check
-                    bool isComplete = false;
-                    lock (tracker.Lock)
-                    {
-                        if (tracker.WriteStream == null)
-                        {
-                            tracker.WriteStream = new FileStream(tracker.SavePath, FileMode.Create,
-                                FileAccess.Write, FileShare.None, 4096, FileOptions.RandomAccess);
-                            tracker.WriteStream.SetLength(tracker.TotalSize);
-                        }
-                        tracker.WriteStream.Seek(chunkOffset, SeekOrigin.Begin);
-                        tracker.WriteStream.Write(chunkData, 0, chunkData.Length);
-                        tracker.BytesReceived += chunkData.Length;
-                        tracker.ChunksCompleted++;
-
-                        if (tracker.BytesReceived >= tracker.TotalSize && !tracker.Complete)
-                        {
-                            tracker.Complete = true;
-                            isComplete = true;
-                        }
-                    }
+                    bool isComplete = tracker.WriteChunk(chunkOffset, chunkData, 4096);
 
                     if (isComplete)
                     {

@@ -253,8 +253,8 @@ namespace TrFileTransfer
             _udp = CreateUdpClient();
             var serverEp = new IPEndPoint(IPAddress.Parse(_serverIp), _port);
 
-            var fileInfo = new FileInfo(_filePath);
-            var nameBytes = System.Text.Encoding.UTF8.GetBytes(fileInfo.Name);
+            string fileName = Path.GetFileName(_filePath);
+            var nameBytes = System.Text.Encoding.UTF8.GetBytes(fileName);
 
             // Build HELLO body: transferType(1) + totalSize(8) + chunkOffset(8) + chunkSize(8) + nameLen(2) + name
             var body = new byte[1 + 8 + 8 + 8 + 2 + nameBytes.Length];
@@ -290,7 +290,7 @@ namespace TrFileTransfer
             if (!helloAcked) return;
 
             bool ok = await SendUdpFileDataAsync(_udp, serverEp, _filePath, chunkSize,
-                fileInfo.Name, ct, reportProgress: true, fileOffset: (int)offset);
+                fileName, ct, reportProgress: true, fileOffset: (int)offset);
             if (ok)
             {
                 var completeHandler = OnTransferComplete;

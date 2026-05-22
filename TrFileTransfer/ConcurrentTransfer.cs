@@ -19,7 +19,6 @@ namespace TrFileTransfer
         private long _totalBytes;
         private long _transferredBytes;
         private int _completedCount;
-        private int _totalCount;
         private readonly object _progressLock = new object();
 
         public event Action<string> OnLog;
@@ -55,7 +54,6 @@ namespace TrFileTransfer
             chunks = Math.Max(1, chunks);
             long chunkSize = (totalSize + chunks - 1) / chunks;
             _totalBytes = totalSize;
-            _totalCount = chunks;
 
             Log(string.Format("Concurrent send: {0} in {1} chunks", fileName, chunks));
 
@@ -105,9 +103,15 @@ namespace TrFileTransfer
                 return;
             }
 
-            _totalCount = files.Length;
-            _totalBytes = files.Length;
-            Log(string.Format("Concurrent folder: {0} files, {1} parallel", files.Length, _concurrency));
+            // Pre-compute total size for accurate progress
+            long folderTotal = 0;
+            foreach (var f in files)
+            {
+                try { folderTotal += new FileInfo(f).Length; } catch { }
+            }
+            _totalBytes = folderTotal;
+            Log(string.Format("Concurrent folder: {0} files ({1}), {2} parallel",
+                files.Length, Utils.FormatSize(folderTotal), _concurrency));
 
             var semaphore = new SemaphoreSlim(_concurrency);
             var tasks = new List<Task>();
@@ -115,8 +119,9 @@ namespace TrFileTransfer
             for (int i = 0; i < files.Length; i++)
             {
                 string file = files[i];
+                long fileSize = 0;
+                try { fileSize = new FileInfo(file).Length; } catch { }
                 int localPort = FindLocalPort(i);
-                int index = i;
                 var task = Task.Run(async () =>
                 {
                     await semaphore.WaitAsync();
@@ -126,7 +131,7 @@ namespace TrFileTransfer
                         lock (_progressLock)
                         {
                             _completedCount++;
-                            _transferredBytes = _completedCount;
+                            _transferredBytes += fileSize;
                             ReportProgress(Path.GetFileName(file));
                         }
                     }
@@ -219,8 +224,7 @@ namespace TrFileTransfer
 
         private void Log(string msg)
         {
-            var handler = OnLog;
-            if (handler != null) handler(string.Format("[{0:HH:mm:ss}] {1}", DateTime.Now, msg));
+            Utils.LogTo(OnLog, msg);
         }
     }
 }
