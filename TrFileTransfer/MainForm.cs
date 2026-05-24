@@ -625,19 +625,33 @@ namespace TrFileTransfer
             {
                 _client = new TransferClient(ip, port, path);
                 WireClientEvents(_client);
-                if (isFolder)
-                    await _client.SendFolderAsync(path);
-                else
-                    await _client.SendAsync();
+                try
+                {
+                    if (isFolder)
+                        await _client.SendFolderAsync(path);
+                    else
+                        await _client.SendAsync();
+                }
+                catch (Exception ex)
+                {
+                    AddLog(L.ErrorPrefix + ex.Message);
+                }
             }
             else
             {
                 _clientUdp = new TransferUdpClient(ip, port, path);
                 WireUdpClientEvents(_clientUdp);
-                if (isFolder)
-                    await _clientUdp.SendFolderAsync(path);
-                else
-                    await _clientUdp.SendAsync();
+                try
+                {
+                    if (isFolder)
+                        await _clientUdp.SendFolderAsync(path);
+                    else
+                        await _clientUdp.SendAsync();
+                }
+                catch (Exception ex)
+                {
+                    AddLog(L.ErrorPrefix + ex.Message);
+                }
             }
 
             try { ResetClientUI(); } catch { }

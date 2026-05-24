@@ -74,6 +74,7 @@ namespace TrFileTransfer
             bool isComplete = false;
             lock (Lock)
             {
+                if (Complete) return false;
                 if (WriteStream == null)
                 {
                     WriteStream = new FileStream(SavePath, FileMode.Create,
