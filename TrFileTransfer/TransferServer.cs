@@ -322,6 +322,12 @@ namespace TrFileTransfer
             }
             else
             {
+                // Clean up tracker on hash failure (prevents orphaned tracker)
+                ChunkTracker removed;
+                if (_chunkTrackers.TryRemove(fileName, out removed))
+                {
+                    try { removed.Dispose(); } catch { }
+                }
                 Log(L.S_HashFailed(fileName));
                 var errHandler = OnError;
                 if (errHandler != null) errHandler(L.S_HashFailed(fileName));

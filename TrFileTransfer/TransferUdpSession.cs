@@ -370,6 +370,8 @@ namespace TrFileTransfer
                 catch (Exception ex)
                 {
                     Log(L.S_HashFailed(fileName + ": " + ex.Message));
+                    var errHandler = OnError;
+                    if (errHandler != null) errHandler(fileName + ": " + ex.Message);
                 }
             }
             else
