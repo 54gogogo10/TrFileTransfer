@@ -15,18 +15,19 @@ build.bat
 
 ## 架构
 
-十一个源文件编译为单个 WinForms exe：
+十二个源文件编译为单个 WinForms exe：
 
 - **Program.cs** — 入口。`[STAThread]` Main 启动 `MainForm`。
-- **MainForm.cs** — GUI。服务器和客户端面板同时显示（已移除模式选择单选按钮）。协议选择（TCP/UDP）、服务器绑定地址下拉框（从活动网卡获取）、文件夹模式/监控模式复选框。动态进度卡片：服务器接收进度和客户端发送进度拆分为两个独立的 `FlowLayoutPanel`（左右排列），每个传输一个卡片（进度条+速度），服务端多客户端独立卡片，客户端每次传输独立卡片，完成 3 秒后自动移除。各自面板下方有独立状态标签。所有 UI 由代码构建（无设计器）。右上角语言下拉框。日志上限 500 条，进度事件节流约 100ms。事件绑定抽取到 `WireClientEvents`/`WireUdpClientEvents` 辅助方法。服务器完成传输后 UI 保持"监听中..."状态（不重新启用所有输入控件）——服务器仍在运行并接受新传输。`ResetClientUI` 重置客户端控件和状态文本为"就绪"。**监控模式**：`_chkMonitor` 复选框启用文件夹监控——启动时先扫描目录中已有文件并入队，然后 `FileSystemWatcher` 检测新文件，等待文件稳定（连续 2 次 500ms 轮询文件大小不变），通过 TCP 或 UDP 发送，成功后移入"已发送文件"子目录。2 分钟内未稳定的文件移到队列末尾。每个文件独立进度卡片。详见下方"监控模式"章节。
-- **TransferServer.cs** — 异步 TCP 服务器。绑定到可配置地址+端口，并发接受多个连接（fire-and-forget）。`HandleClient` 读取 1 字节类型前缀，分发到 `HandleFileTransfer`（单文件）或 `HandleFolderTransfer`（文件夹，带每个文件的相对路径和 SHA256）。使用 `Task.Factory.StartNew(LongRunning)` 执行接受循环。设置 `NoDelay = true` 和 256KB 缓冲区。新增 `OnClientConnected`/`OnClientProgress`/`OnClientTransferComplete` 事件（按客户端 IPEndPoint 区分），支持并发多客户端独立进度跟踪。
-- **TransferClient.cs** — 异步 TCP 客户端。`SendAsync()` 发送单文件，`SendFolderAsync()` 发送文件夹。两者委托到共享的 `RunTransfer` 包装器进行生命周期管理。发送文件元数据 + 数据 + 每个文件的 SHA256 哈希。设置 `NoDelay = true` 和 256KB 缓冲区。`SendFilePayload` 辅助方法由单文件和文件夹传输共享。`SendFileInternal` 和 `SendFolderInternal` 均在成功时触发 `OnTransferComplete`。
-- **TransferUdpSession.cs** — 每个 UDP 客户端的独立传输会话。包含完整接收状态（SHA256、FileStream、2MB 写缓冲、expectedSeq、NAK 状态）。通过 `EnqueuePacket`（返回 bool 表示是否成功入队）从 `ReceiveLoop` 接收包，内部通过 `SemaphoreSlim` 等待并处理。支持 FolderEnd。`IsRunning` 为 false 时拒绝新包（防止跨文件 HELLO 丢失）。所有 await 使用 `ConfigureAwait(false)`。
-- **TransferUdpServer.cs** — 可靠 UDP 服务器。`ReceiveLoop` 接收所有包，按 `clientEp` 分发到 `Dictionary<IPEndPoint, TransferUdpSession>`。HELLO 创建新 Session，DATA/FIN/FolderEnd 入队到对应 Session。每个 Session 独立运行，拥有自己的进度、日志事件。4 MB 套接字缓冲区。
-- **TransferUdpClient.cs** — 可靠 UDP 客户端。`SendAsync()` 发送单文件，`SendFolderAsync()` 发送文件夹。两者委托到共享的 `RunUdpTransfer` 包装器。使用滑动窗口（512 块 × 4096 字节 = 2 MB 窗口）、超时重传、丢包时 Go-Back-N。`WaitForAckAsync()` 清空过期非 ACK 包，收到 ACK(seq=0) 后返回。`SendUdpFileDataAsync()` 通过 `Task.WhenAll` 异步发送整个窗口（批量发送，每窗 1 次 await）。1 MB 读缓冲区批量读取文件 I/O。NAK 触发的重传是选择性的（单个块入队，非整个窗口 Go-Back-N）；超时仍触发 Go-Back-N。SHA256 哈希计算一次并在重传中复用。`reportProgress` 参数在文件夹传输时抑制每个文件的进度事件。`CreateUdpClient()` 辅助方法消除 UdpClient 设置重复。所有异步方法使用 `ConfigureAwait(false)` 避免 UI 线程饥饿。
+- **MainForm.cs** — GUI。服务器和客户端面板同时显示（已移除模式选择单选按钮）。**服务器协议**：`_chkServerTcp`/`_chkServerUdp` 复选框，可多选同时启动两个协议。**客户端协议**：`_rbClientTcp`/`_rbClientUdp` 单选按钮，独立于服务器。**并发控制**：`_numConcurrency` NumericUpDown（1-64），控制客户端多连接并行传输数量。服务器绑定地址下拉框（从活动网卡获取）、文件夹模式/监控模式复选框。动态进度卡片：服务器接收进度和客户端发送进度拆分为两个独立的 `FlowLayoutPanel`（左右排列），每个传输一个卡片（进度条+速度），服务端多客户端独立卡片，客户端每次传输独立卡片，完成 3 秒后自动移除。各自面板下方有独立状态标签。所有 UI 由代码构建（无设计器）。右上角语言下拉框。日志上限 500 条，进度事件节流约 100ms。事件绑定抽取到 `WireClientEvents`/`WireUdpClientEvents`/`WireConcurrentEvents` 辅助方法。服务器完成传输后 UI 保持"监听中..."状态（不重新启用所有输入控件）——服务器仍在运行并接受新传输。`ResetClientUI` 重置客户端控件和状态文本为"就绪"。`_serverCount` 计数器防止一个协议停止时误启用全部 UI。**监控模式**：`_chkMonitor` 复选框启用文件夹监控——启动时先扫描目录中已有文件并入队，然后 `FileSystemWatcher` 检测新文件，等待文件稳定（连续 2 次 500ms 轮询文件大小不变），通过 TCP 或 UDP 发送，成功后移入"已发送文件"子目录。2 分钟内未稳定的文件移到队列末尾。每个文件独立进度卡片。详见下方"监控模式"章节。
+- **TransferServer.cs** — 异步 TCP 服务器。绑定到可配置地址+端口，并发接受多个连接（fire-and-forget）。`HandleClient` 读取 1 字节类型前缀，分发到 `HandleFileTransfer`（单文件 0x00）、`HandleFolderTransfer`（文件夹 0x01）或 `HandleChunkedFile`（分块文件 0x02）。文件夹传输带每个文件的相对路径和 SHA256。使用 `Task.Factory.StartNew(LongRunning)` 执行接受循环。设置 `NoDelay = true` 和 256KB 缓冲区。`OnClientConnected`/`OnClientProgress`/`OnClientTransferComplete` 事件按客户端 IPEndPoint 区分，支持并发多客户端独立进度跟踪。`_chunkTrackers`（`ConcurrentDictionary<string, ChunkTracker>`）聚合分块传输，`ChunkTracker` 延迟创建 `FileStream`（lock 内首次写入时），单 lock 完成写入+完成检查防止 TOCTOU 竞态。`Stop()` 时清理未完成的 ChunkTracker。
+- **TransferClient.cs** — 异步 TCP 客户端。`SendAsync()` 发送单文件，`SendFolderAsync()` 发送文件夹，`SendChunkedAsync(offset, chunkSize, totalSize)` 发送分块文件（类型 0x02）。前两者委托到共享的 `RunTransfer` 包装器进行生命周期管理。发送文件元数据 + 数据 + SHA256 哈希。设置 `NoDelay = true` 和 256KB 缓冲区。`SendFilePayload` 辅助方法接受 `fileOffset` 参数，支持从文件中间开始读取（用于分块传输）。构造函数支持 `localPort` 参数绑定特定源端口。`RunTransfer` 中非取消异常重新抛出以正确传播错误到并发编排器。
+- **TransferUdpSession.cs** — 每个 UDP 客户端的独立传输会话。包含完整接收状态（SHA256、FileStream、2MB 写缓冲、expectedSeq、NAK 状态）。通过 `EnqueuePacket`（返回 bool 表示是否成功入队）从 `ReceiveLoop` 接收包，内部通过 `SemaphoreSlim` 等待并处理。支持 FolderEnd。HELLO transferType 0x02（分块文件）解析 totalFileSize/chunkOffset/chunkSize。分块完成后从临时文件复制数据到 ChunkTracker。`IsRunning` 为 false 时拒绝新包（防止跨文件 HELLO 丢失）。所有 await 使用 `ConfigureAwait(false)`。`_chunkTrackers` 由 `TransferUdpServer` 传入（实例级，非 static）。
+- **TransferUdpServer.cs** — 可靠 UDP 服务器。`ReceiveLoop` 接收所有包，按 `clientEp` 分发到 `ConcurrentDictionary<IPEndPoint, TransferUdpSession>`。HELLO 创建新 Session（`OnSessionStarted` 仅对新 session 触发，重传 HELLO 直接回复 ACK），DATA/FIN/FolderEnd 入队到对应 Session。`_chunkTrackers` 字典从服务端传入每个 Session。每个 Session 独立运行，拥有自己的进度、日志事件。4 MB 套接字缓冲区。
+- **TransferUdpClient.cs** — 可靠 UDP 客户端。`SendAsync()` 发送单文件，`SendFolderAsync()` 发送文件夹，`SendChunkedAsync(offset, chunkSize, totalSize)` 发送分块文件（HELLO transferType 0x02）。使用滑动窗口（512 块 × 4096 字节 = 2 MB 窗口）、超时重传、丢包时 Go-Back-N。`SendUdpFileDataAsync()` 接受 `fileOffset` 参数支持分块读取。`CreateUdpClient()` 支持绑定特定源端口。`RunUdpTransfer` 中非取消异常重新抛出。所有异步方法使用 `ConfigureAwait(false)`。
+- **ConcurrentTransfer.cs** — 多连接并发传输编排器。`SendAsync()` 将单文件切分为 N 个等大分块，并行发送（每个分块一个独立连接 + 独立源端口）。`SendFolderAsync()` 用 `SemaphoreSlim` 控制并发度，并行发送 N 个文件。聚合子传输进度（单文件：所有分块已传输字节之和；文件夹：已完成文件数及累计字节）。源端口通过 `Utils.FindFreePort(basePort + index + 1)` 分配。支持 TCP 和 UDP。
 - **UdpProtocol.cs** — 共享的 UDP 线协议常量和辅助方法。此处定义包格式和类型。`BuildPacketFromBuffer` 从源缓冲区+偏移直接构建包，避免中间正文拷贝；`BuildPacket` 委托给它。`BuildPacketFromBuffer` 对 null 源（空包体 ACK/NAK/FIN_ACK）有防护。
 - **Config.cs** — 键值配置持久化。保存/加载到 `%AppData%\TrFileTransfer\config.ini`。`Get`/`GetInt`/`GetBool`/`Set`/`SetInt`/`SetBool` 辅助方法。启动时加载，关闭时保存。
-- **Shared.cs** — `TransferProgress` 类、`Utils` 静态辅助方法（`FormatSize`、`ConstantTimeEquals`、`LogTo`、`SanitizeRelativePath`、`GetUniqueSavePath`）。四个传输文件通用，避免重复。
+- **Shared.cs** — `TransferProgress` 结构体（值类型，免堆分配）、`FileEntry` 结构体、`ChunkTracker` 类（分块重组追踪：文件名聚合、延迟 FileStream 创建、`GetOrCreate`/`WriteChunk` 共享辅助方法）、`Utils` 静态辅助方法（`FormatSize`、`ConstantTimeEquals`、`LogTo`、`SanitizeRelativePath`、`GetUniqueSavePath`、`EmptyBytes`、`FindFreePort`）。所有传输文件通用，避免重复。
 - **L10N.cs** — 本地化字符串。静态 `L` 类根据 `L.IsChinese` 返回英文或中文文本。命名规则见下方"本地化约定"。
 
 ### 本地化约定
@@ -50,7 +51,7 @@ TCP 和 UDP 服务器都使用 `Utils.GetUniqueSavePath`，在基础文件名（
 
 ## TCP 线协议
 
-所有传输以 1 字节类型开始：`0x00` = 单文件，`0x01` = 文件夹。
+所有传输以 1 字节类型开始：`0x00` = 单文件，`0x01` = 文件夹，`0x02` = 分块文件（并发传输）。
 
 ### 单文件（类型 0x00）
 
@@ -78,6 +79,21 @@ TCP 和 UDP 服务器都使用 `Utils.GetUniqueSavePath`，在基础文件名（
     [32 bytes: 此文件内容 SHA256 哈希]
 ```
 
+### 分块文件（类型 0x02）
+
+```
+[1 byte:  0x02]
+[8 bytes: Int64 完整文件总大小]
+[8 bytes: Int64 此块在文件中的字节偏移]
+[8 bytes: Int64 此块数据大小]
+[4 bytes: Int32 文件名长度]
+[N bytes: UTF-8 文件名]  // 所有块共享同一文件名，服务端以此聚合
+[M bytes: 分块数据（chunkSize 字节）]
+[32 bytes: 此块内容的 SHA256 哈希]
+```
+
+服务器按文件名聚合到 `ChunkTracker`，首次写入时预分配文件大小，后续块 seek到偏移写入。全部块收齐后触发 `OnTransferComplete`。每个块独立 SHA256 校验，单块损坏只丢弃该块（客户端超时重传）。
+
 服务器根据需要从每个文件的相对路径在保存路径中创建子目录。如果某个文件的 SHA256 失败，整个文件夹传输中止。文件名冲突处理在文件夹保存目录名追加 `_1`、`_2`。
 
 ## UDP 线协议
@@ -96,7 +112,7 @@ TCP 和 UDP 服务器都使用 `Utils.GetUniqueSavePath`，在基础文件名（
 
 NAK 流程：当服务器检测到缺口（收到 seq > expectedSeq 的乱序数据）时，对同一 `expectedSeq` 的乱序包进行计数。仅在 `NakThreshold`（3）次乱序到达后才发送 NAK——单次乱序包视为顺序调换，非丢包（类似 TCP 快速重传的 3 个重复 ACK）。NAK seq = `expectedSeq`（首个缺失块）。客户端将**选择性重传**该块入队（非 Go-Back-N），仅重传 NAK 指定的块。同一 seq 的重复 NAK 通过 `lastNakSeq` 抑制。`lastNakSeq` 和 `outOfOrderCount` 在有序数据到达、缺口移动时重置。
 
-HELLO 正文 transferType：`0x00` = 单文件（服务器用 `Path.GetFileName` 清理文件名），`0x01` = 文件夹文件（服务器保留相对路径，创建子目录）。
+HELLO 正文 transferType：`0x00` = 单文件（服务器用 `Path.GetFileName` 清理文件名），`0x01` = 文件夹文件（服务器保留相对路径，创建子目录），`0x02` = 分块文件（正文：totalFileSize(8) + chunkOffset(8) + chunkSize(8) + nameLen(2) + fileName(N)）。每个分块走独立的 HELLO→DATA→FIN→FIN_ACK 周期。
 
 流程（单文件）：HELLO → HELLO_ACK（常规 ACK 包，seq=0）→ DATA[0..N] ↔ ACK[0..N] → FIN → FIN_ACK。窗口大小 512 块（2 MB），动态 RTT 超时（初始 3 秒，收敛至 max(4×RTT, 500ms)），最多 15 次重试。服务器仅对有序包发送 ACK；客户端在超时时从上次 ACK 处开始重传（Go-Back-N）。
 
