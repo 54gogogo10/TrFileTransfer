@@ -143,7 +143,18 @@ namespace TrFileTransfer
             Log(L.UdpS_Receiving(fileName, Utils.FormatSize(fileSize)));
 
             var helloAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, 0, null);
-            await _udp.SendAsync(helloAck, helloAck.Length, _clientEp).ConfigureAwait(false);
+            try
+            {
+                Log(string.Format("Sending HELLO_ACK to {0}", _clientEp));
+                await _udp.SendAsync(helloAck, helloAck.Length, _clientEp).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log(string.Format("HELLO_ACK send failed: {0}", ex.Message));
+                var errHandler = OnError;
+                if (errHandler != null) errHandler(ex.Message);
+                return;
+            }
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
             long bytesReceived = 0;
