@@ -279,7 +279,7 @@ namespace TrFileTransfer
                 Log(string.Format("Chunk sending: {0} offset={1} size={2}",
                     fileName, offset, Utils.FormatSize(chunkSize)));
 
-                await SendFilePayload(stream, _filePath, chunkSize, fileName, ct, (int)offset);
+                await SendFilePayload(stream, _filePath, chunkSize, fileName, ct, offset);
 
                 var completeHandler = OnTransferComplete;
                 if (completeHandler != null) completeHandler();
@@ -287,7 +287,7 @@ namespace TrFileTransfer
         }
 
         private async Task SendFilePayload(NetworkStream stream, string filePath, long fileSize,
-            string displayName, CancellationToken ct, int fileOffset = 0)
+            string displayName, CancellationToken ct, long fileOffset = 0)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             long bytesSent = 0;

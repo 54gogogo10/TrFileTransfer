@@ -203,7 +203,8 @@ namespace TrFileTransfer
         private int FindLocalPort(int index)
         {
             int basePort = _port + index + 1;
-            return Utils.FindFreePort(basePort, _isUdp);
+            int port = Utils.FindFreePort(basePort, _isUdp);
+            return port != 0 ? port : 0; // 0 = let OS assign if scan exhausted
         }
 
         private void ReportProgress(string displayName)

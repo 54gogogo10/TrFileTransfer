@@ -290,7 +290,7 @@ namespace TrFileTransfer
             if (!helloAcked) return;
 
             bool ok = await SendUdpFileDataAsync(_udp, serverEp, _filePath, chunkSize,
-                fileName, ct, reportProgress: true, fileOffset: (int)offset);
+                fileName, ct, reportProgress: true, fileOffset: offset);
             if (ok)
             {
                 var completeHandler = OnTransferComplete;
@@ -299,7 +299,7 @@ namespace TrFileTransfer
         }
 
         private async Task<bool> SendUdpFileDataAsync(UdpClient udp, IPEndPoint serverEp, string filePath,
-            long fileSize, string displayName, CancellationToken ct, bool reportProgress, int fileOffset = 0)
+            long fileSize, string displayName, CancellationToken ct, bool reportProgress, long fileOffset = 0)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var progressTimer = System.Diagnostics.Stopwatch.StartNew();
