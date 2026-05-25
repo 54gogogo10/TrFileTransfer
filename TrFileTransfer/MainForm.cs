@@ -160,7 +160,7 @@ namespace TrFileTransfer
                 Location = new Point(335, 92), Width = 45,
                 Minimum = 1, Maximum = 64, Value = 1
             };
-            _btnAbout = new Button { Location = new Point(395, 14), Width = 75, Height = 22 };
+            _btnAbout = new Button { Location = new Point(395, 14), Width = 75, Height = 23 };
             _btnAbout.Click += BtnAbout_Click;
             _btnCancel = new Button { Location = new Point(455, 56), Width = 110, Height = 30, Enabled = false };
             _btnCancel.Click += BtnCancel_Click;
@@ -1030,12 +1030,12 @@ namespace TrFileTransfer
             return false;
         }
 
-        /// <summary>Stops any active transfer before closing the window.</summary>
         private void BtnAbout_Click(object sender, EventArgs e)
         {
             MessageBox.Show(L.AboutText, L.AboutTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
+        /// <summary>Stops any active transfer before closing the window.</summary>
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             SaveConfig();
