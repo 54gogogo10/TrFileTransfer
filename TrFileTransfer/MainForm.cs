@@ -47,6 +47,8 @@ namespace TrFileTransfer
         private CheckBox _chkFolder;
         private CheckBox _chkMonitor;
         private NumericUpDown _numConcurrency;
+        private Label _lblConcurrency;
+        private Button _btnAbout;
 
         // Progress
         private GroupBox _gbProgressS;
@@ -142,12 +144,7 @@ namespace TrFileTransfer
             _txtPortC = new TextBox { Text = "8080", Location = new Point(267, 25), Width = 55 };
             _rbClientTcp = new RadioButton { Text = "TCP", Location = new Point(335, 23), Width = 50, Checked = true };
             _rbClientUdp = new RadioButton { Text = "UDP", Location = new Point(387, 23), Width = 55 };
-            _numConcurrency = new NumericUpDown
-            {
-                Location = new Point(447, 22), Width = 45,
-                Minimum = 1, Maximum = 64, Value = 1
-            };
-            _btnSend = new Button { Location = new Point(500, 20), Width = 65, Height = 30 };
+            _btnSend = new Button { Location = new Point(455, 20), Width = 110, Height = 30 };
             _btnSend.Click += BtnSend_Click;
             _lblFile = new Label { Location = new Point(15, 63), Width = 48, TextAlign = ContentAlignment.MiddleRight };
             _txtFile = new TextBox { Location = new Point(68, 60), Width = 290 };
@@ -157,6 +154,14 @@ namespace TrFileTransfer
             _chkFolder.CheckedChanged += ChkFolder_CheckedChanged;
             _chkMonitor = new CheckBox { Location = new Point(70, 95), Width = 100, TextAlign = ContentAlignment.MiddleLeft };
             _chkMonitor.CheckedChanged += ChkMonitor_CheckedChanged;
+            _lblConcurrency = new Label { Location = new Point(290, 95), Width = 40, TextAlign = ContentAlignment.MiddleRight };
+            _numConcurrency = new NumericUpDown
+            {
+                Location = new Point(335, 92), Width = 45,
+                Minimum = 1, Maximum = 64, Value = 1
+            };
+            _btnAbout = new Button { Location = new Point(395, 14), Width = 75, Height = 22 };
+            _btnAbout.Click += BtnAbout_Click;
             _btnCancel = new Button { Location = new Point(455, 56), Width = 110, Height = 30, Enabled = false };
             _btnCancel.Click += BtnCancel_Click;
             _gbClient.Controls.Add(_lblServerIp);
@@ -165,6 +170,7 @@ namespace TrFileTransfer
             _gbClient.Controls.Add(_txtPortC);
             _gbClient.Controls.Add(_rbClientTcp);
             _gbClient.Controls.Add(_rbClientUdp);
+            _gbClient.Controls.Add(_lblConcurrency);
             _gbClient.Controls.Add(_numConcurrency);
             _gbClient.Controls.Add(_lblFile);
             _gbClient.Controls.Add(_txtFile);
@@ -204,6 +210,7 @@ namespace TrFileTransfer
             _gbLog.Controls.Add(_lstLog);
 
             Controls.Add(_cmbLang);
+            Controls.Add(_btnAbout);
             Controls.Add(_gbServer);
             Controls.Add(_gbClient);
             Controls.Add(_gbProgressS);
@@ -238,6 +245,8 @@ namespace TrFileTransfer
             _btnCancel.Text = L.CancelBtn;
             _chkFolder.Text = L.FolderMode;
             _chkMonitor.Text = L.MonitorMode;
+            _lblConcurrency.Text = L.ConcurrencyLabel;
+            _btnAbout.Text = L.AboutBtn;
 
             _gbProgressS.Text = L.ServerProgress;
             _gbProgressC.Text = L.ClientProgress;
@@ -1022,6 +1031,11 @@ namespace TrFileTransfer
         }
 
         /// <summary>Stops any active transfer before closing the window.</summary>
+        private void BtnAbout_Click(object sender, EventArgs e)
+        {
+            MessageBox.Show(L.AboutText, L.AboutTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             SaveConfig();
