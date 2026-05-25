@@ -331,6 +331,7 @@ namespace TrFileTransfer
                 int bufDataLen = 0;
                 var retransmitQ = new System.Collections.Generic.Queue<int>();
                 var sendTasks = new System.Collections.Generic.List<System.Threading.Tasks.Task<int>>();
+                var sendSemaphore = new SemaphoreSlim(64);
 
                 Log(string.Format("Data phase: {0} chunks, window={1}", totalChunks, _windowSize));
 
@@ -377,7 +378,13 @@ namespace TrFileTransfer
 
                             var dataPacket = UdpProtocol.BuildPacketFromBuffer(UdpProtocol.TypeData, currentSeq,
                                 readBuf, bufOff, chunkSize);
-                            sendTasks.Add(udp.SendAsync(dataPacket, dataPacket.Length, serverEp));
+                            await sendSemaphore.WaitAsync();
+                            var sendTask = udp.SendAsync(dataPacket, dataPacket.Length, serverEp);
+                            sendTasks.Add(sendTask);
+
+                            // Track this task for semaphore release on completion
+                            var capturedTask = sendTask;
+                            var _ = capturedTask.ContinueWith(t => sendSemaphore.Release());
 
                             if (currentSeq > hashedUpTo)
                             {
