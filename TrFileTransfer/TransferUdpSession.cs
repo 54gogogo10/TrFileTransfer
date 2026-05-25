@@ -15,7 +15,8 @@ namespace TrFileTransfer
     #pragma warning disable 1591
     public class TransferUdpSession
     {
-        private readonly UdpClient _udp;
+        private readonly UdpClient _udp;        // shared with receive loop, only for receiving
+        private readonly UdpClient _sendUdp;     // dedicated client for sending ACKs
         private readonly IPEndPoint _clientEp;
         private readonly string _saveDirectory;
         private readonly Queue<byte[]> _packets = new Queue<byte[]>();
@@ -37,6 +38,7 @@ namespace TrFileTransfer
             ConcurrentDictionary<string, ChunkTracker> chunkTrackers = null)
         {
             _udp = udp;
+            _sendUdp = new UdpClient(); // dedicated socket for ACK sends, avoids contention with receive loop
             _clientEp = clientEp;
             _saveDirectory = saveDirectory;
             _chunkTrackers = chunkTrackers ?? new ConcurrentDictionary<string, ChunkTracker>();
@@ -145,7 +147,7 @@ namespace TrFileTransfer
             var helloAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, 0, null);
             try
             {
-                _udp.Send(helloAck, helloAck.Length, _clientEp);
+                _sendUdp.Send(helloAck, helloAck.Length, _clientEp);
                 Log(string.Format("HELLO_ACK sent to {0}", _clientEp));
             }
             catch (Exception ex)
@@ -257,7 +259,7 @@ namespace TrFileTransfer
                                     && expectedSeq != lastNakSeq && expectedSeq < totalChunks)
                                 {
                                     var nak = UdpProtocol.BuildPacket(UdpProtocol.TypeNak, expectedSeq, null);
-                                    await _udp.SendAsync(nak, nak.Length, _clientEp).ConfigureAwait(false);
+                                    _sendUdp.Send(nak, nak.Length, _clientEp);
                                     lastNakSeq = expectedSeq;
                                 }
                             }
@@ -265,7 +267,7 @@ namespace TrFileTransfer
                         else if (type == UdpProtocol.TypeFolderEnd)
                         {
                             var fack = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, 0, null);
-                            await _udp.SendAsync(fack, fack.Length, _clientEp).ConfigureAwait(false);
+                            _sendUdp.Send(fack, fack.Length, _clientEp);
                             if (writeBufPos > 0)
                             {
                                 await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
@@ -278,7 +280,7 @@ namespace TrFileTransfer
                             if (unackedSinceLastAck > 0)
                             {
                                 var flushAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
-                                await _udp.SendAsync(flushAck, flushAck.Length, _clientEp).ConfigureAwait(false);
+                                _sendUdp.Send(flushAck, flushAck.Length, _clientEp);
                                 unackedSinceLastAck = 0;
                                 lastAckTimestamp = Stopwatch.GetTimestamp();
                             }
@@ -315,7 +317,7 @@ namespace TrFileTransfer
                                     }
                                     else
                                     {
-                                        await _udp.SendAsync(finAck, finAck.Length, _clientEp).ConfigureAwait(false);
+                                        _sendUdp.Send(finAck, finAck.Length, _clientEp);
                                     }
                                 }
                                 else
@@ -327,7 +329,7 @@ namespace TrFileTransfer
                                     else
                                     {
                                         var finAck = UdpProtocol.BuildPacket(UdpProtocol.TypeFinAck, 0, null);
-                                        await _udp.SendAsync(finAck, finAck.Length, _clientEp).ConfigureAwait(false);
+                                        _sendUdp.Send(finAck, finAck.Length, _clientEp);
                                     }
                                 }
                                 if (!isChunked) finProcessed = true;
@@ -335,7 +337,7 @@ namespace TrFileTransfer
                             else
                             {
                                 var ack = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
-                                await _udp.SendAsync(ack, ack.Length, _clientEp).ConfigureAwait(false);
+                                _sendUdp.Send(ack, ack.Length, _clientEp);
                             }
                         }
                     }
@@ -346,7 +348,7 @@ namespace TrFileTransfer
                         try
                         {
                             var ack = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
-                            _udp.Send(ack, ack.Length, _clientEp);
+                            _sendUdp.Send(ack, ack.Length, _clientEp);
                         }
                         catch { }
                     }
@@ -358,7 +360,7 @@ namespace TrFileTransfer
                     if (shouldSendAck)
                     {
                         var batchAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
-                        try { _udp.Send(batchAck, batchAck.Length, _clientEp); } catch { }
+                        try { _sendUdp.Send(batchAck, batchAck.Length, _clientEp); } catch { }
                         unackedSinceLastAck = 0;
                         lastAckTimestamp = Stopwatch.GetTimestamp();
                     }
@@ -374,7 +376,7 @@ namespace TrFileTransfer
                 try
                 {
                     var finalAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
-                    _udp.Send(finalAck, finalAck.Length, _clientEp);
+                    _sendUdp.Send(finalAck, finalAck.Length, _clientEp);
                 }
                 catch { }
             }
@@ -398,7 +400,7 @@ namespace TrFileTransfer
 
                     // Send FIN_ACK after chunk data is safely persisted
                     var chunkFinAck = UdpProtocol.BuildPacket(UdpProtocol.TypeFinAck, 0, null);
-                    await _udp.SendAsync(chunkFinAck, chunkFinAck.Length, _clientEp).ConfigureAwait(false);
+                    _sendUdp.Send(chunkFinAck, chunkFinAck.Length, _clientEp);
 
                     if (isComplete)
                     {
@@ -416,7 +418,7 @@ namespace TrFileTransfer
                     try
                     {
                         var failFin = UdpProtocol.BuildPacket(UdpProtocol.TypeFin, 0, new byte[1]);
-                        _udp.Send(failFin, failFin.Length, _clientEp);
+                        _sendUdp.Send(failFin, failFin.Length, _clientEp);
                     }
                     catch { }
                     Log(L.S_HashFailed(fileName + ": " + ex.Message));
