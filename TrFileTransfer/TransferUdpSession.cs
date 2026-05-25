@@ -145,8 +145,8 @@ namespace TrFileTransfer
             var helloAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, 0, null);
             try
             {
-                Log(string.Format("Sending HELLO_ACK to {0}", _clientEp));
-                await _udp.SendAsync(helloAck, helloAck.Length, _clientEp).ConfigureAwait(false);
+                _udp.Send(helloAck, helloAck.Length, _clientEp);
+                Log(string.Format("HELLO_ACK sent to {0}", _clientEp));
             }
             catch (Exception ex)
             {
