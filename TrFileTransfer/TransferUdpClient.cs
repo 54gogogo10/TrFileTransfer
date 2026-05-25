@@ -139,6 +139,7 @@ namespace TrFileTransfer
 
             if (!await WaitForAckAsync()) return;
 
+            Log("HELLO ACK received, starting data transfer...");
             var sw = System.Diagnostics.Stopwatch.StartNew();
             bool ok = await SendUdpFileDataAsync(_udp, serverEp, _filePath, fileSize, fileName, ct, reportProgress: true);
             sw.Stop();
@@ -331,6 +332,8 @@ namespace TrFileTransfer
                 var retransmitQ = new System.Collections.Generic.Queue<int>();
                 var sendTasks = new System.Collections.Generic.List<System.Threading.Tasks.Task<int>>();
 
+                Log(string.Format("Data phase: {0} chunks, window={1}", totalChunks, _windowSize));
+
                 while (true)
                 {
                     while (sendBase < totalChunks && !ct.IsCancellationRequested)
@@ -388,6 +391,8 @@ namespace TrFileTransfer
                             await System.Threading.Tasks.Task.WhenAll(sendTasks.ToArray()).ConfigureAwait(false);
                             windowSendTimestamp = Stopwatch.GetTimestamp();
                             canMeasureRtt = true;
+                            Log(string.Format("Sent {0} chunks (seq {1}-{2}), waiting ACK...",
+                                sendTasks.Count, sendBase, sendBase + sendTasks.Count - 1));
                         }
                         udp.Client.ReceiveTimeout = dynTimeout;
                         try
