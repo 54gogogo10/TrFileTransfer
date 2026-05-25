@@ -358,7 +358,7 @@ namespace TrFileTransfer
                     if (shouldSendAck)
                     {
                         var batchAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
-                        await _udp.SendAsync(batchAck, batchAck.Length, _clientEp).ConfigureAwait(false);
+                        try { _udp.Send(batchAck, batchAck.Length, _clientEp); } catch { }
                         unackedSinceLastAck = 0;
                         lastAckTimestamp = Stopwatch.GetTimestamp();
                     }
