@@ -40,6 +40,7 @@ namespace TrFileTransfer
             _clientEp = clientEp;
             _saveDirectory = saveDirectory;
             _chunkTrackers = chunkTrackers ?? new ConcurrentDictionary<string, ChunkTracker>();
+            IsRunning = true; // accept Data packets immediately, before RunAsync starts
         }
 
         public bool EnqueuePacket(byte[] packet)
