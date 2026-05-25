@@ -416,7 +416,7 @@ namespace TrFileTransfer
                     try
                     {
                         var failFin = UdpProtocol.BuildPacket(UdpProtocol.TypeFin, 0, new byte[1]);
-                        _udp.SendAsync(failFin, failFin.Length, _clientEp);
+                        _udp.Send(failFin, failFin.Length, _clientEp);
                     }
                     catch { }
                     Log(L.S_HashFailed(fileName + ": " + ex.Message));

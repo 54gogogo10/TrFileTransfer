@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 
 namespace TrFileTransfer
 {
+    #pragma warning disable 1591
     public class ConcurrentTransfer
     {
         private readonly string _serverIp;

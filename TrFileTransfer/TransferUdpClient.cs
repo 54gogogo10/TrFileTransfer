@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 namespace TrFileTransfer
 {
     /// <summary>Reliable UDP file/folder sender (Go-Back-N ARQ, SHA256).</summary>
+    #pragma warning disable 1591
     public class TransferUdpClient
     {
         private UdpClient _udp;
