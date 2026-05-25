@@ -34,6 +34,8 @@ namespace TrFileTransfer
         public const byte TypeFolderEnd = 5;
         /// <summary>NAK packet — requests retransmission from a specific seq (body: empty, seq = first missing chunk).</summary>
         public const byte TypeNak     = 6;
+        /// <summary>MissingReport — server→client: body = count(4) + seq1(4) + seq2(4) + ...</summary>
+        public const byte TypeMissingReport = 7;
 
         /// <summary>Builds a complete UDP packet with header and optional body.</summary>
         public static byte[] BuildPacket(byte type, int sequence, byte[] body)
