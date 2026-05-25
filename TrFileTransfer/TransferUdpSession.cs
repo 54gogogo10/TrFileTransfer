@@ -288,7 +288,6 @@ namespace TrFileTransfer
                                         ? UdpProtocol.TypeFinAck : UdpProtocol.TypeFin;
                                     var finAck = UdpProtocol.BuildPacket(finAckType, 0,
                                         finAckType == UdpProtocol.TypeFinAck ? null : new byte[1]);
-                                    await _udp.SendAsync(finAck, finAck.Length, _clientEp).ConfigureAwait(false);
                                     if (finAckType != UdpProtocol.TypeFinAck)
                                     {
                                         Log(L.S_HashFailed(fileName));
@@ -297,13 +296,29 @@ namespace TrFileTransfer
                                         return;
                                     }
 
+                                    // For chunked: write to ChunkTracker BEFORE sending FIN_ACK
+                                    if (isChunked)
+                                    {
+                                        finProcessed = true;
+                                    }
+                                    else
+                                    {
+                                        await _udp.SendAsync(finAck, finAck.Length, _clientEp).ConfigureAwait(false);
+                                    }
                                 }
                                 else
                                 {
-                                    var finAck = UdpProtocol.BuildPacket(UdpProtocol.TypeFinAck, 0, null);
-                                    await _udp.SendAsync(finAck, finAck.Length, _clientEp).ConfigureAwait(false);
+                                    if (isChunked)
+                                    {
+                                        finProcessed = true;
+                                    }
+                                    else
+                                    {
+                                        var finAck = UdpProtocol.BuildPacket(UdpProtocol.TypeFinAck, 0, null);
+                                        await _udp.SendAsync(finAck, finAck.Length, _clientEp).ConfigureAwait(false);
+                                    }
                                 }
-                                finProcessed = true;
+                                if (!isChunked) finProcessed = true;
                             }
                             else
                             {
@@ -357,6 +372,10 @@ namespace TrFileTransfer
 
                     bool isComplete = tracker.WriteChunk(chunkOffset, chunkData, 4096);
 
+                    // Send FIN_ACK after chunk data is safely persisted
+                    var chunkFinAck = UdpProtocol.BuildPacket(UdpProtocol.TypeFinAck, 0, null);
+                    await _udp.SendAsync(chunkFinAck, chunkFinAck.Length, _clientEp).ConfigureAwait(false);
+
                     if (isComplete)
                     {
                         tracker.Dispose();
@@ -369,6 +388,13 @@ namespace TrFileTransfer
                 }
                 catch (Exception ex)
                 {
+                    // Notify client of hash failure (best-effort, fire-and-forget)
+                    try
+                    {
+                        var failFin = UdpProtocol.BuildPacket(UdpProtocol.TypeFin, 0, new byte[1]);
+                        _udp.SendAsync(failFin, failFin.Length, _clientEp);
+                    }
+                    catch { }
                     Log(L.S_HashFailed(fileName + ": " + ex.Message));
                     var errHandler = OnError;
                     if (errHandler != null) errHandler(fileName + ": " + ex.Message);

@@ -356,17 +356,6 @@ namespace TrFileTransfer
             }
         }
 
-        private static async Task ReadExactAsync(NetworkStream stream, byte[] buffer, int offset, int count, CancellationToken ct)
-        {
-            int totalRead = 0;
-            while (totalRead < count)
-            {
-                int read = await stream.ReadAsync(buffer, offset + totalRead, count - totalRead, ct).ConfigureAwait(false);
-                if (read == 0) throw new IOException("Connection closed unexpectedly");
-                totalRead += read;
-            }
-        }
-
         private void Log(string msg)
         {
             Utils.LogTo(OnLog, msg);

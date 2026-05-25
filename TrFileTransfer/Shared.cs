@@ -45,8 +45,11 @@ namespace TrFileTransfer
 
         public void Dispose()
         {
-            Complete = true;
-            try { if (WriteStream != null) { WriteStream.Dispose(); WriteStream = null; } } catch { }
+            lock (Lock)
+            {
+                Complete = true;
+                try { if (WriteStream != null) { WriteStream.Dispose(); WriteStream = null; } } catch { }
+            }
         }
 
         /// <summary>Gets or creates a tracker, deferring FileStream creation.</summary>
