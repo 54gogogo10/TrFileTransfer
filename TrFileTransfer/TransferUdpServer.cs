@@ -15,6 +15,7 @@ namespace TrFileTransfer
     {
         private UdpClient _udp;
         private CancellationTokenSource _cts;
+        private readonly string _bindAddress;
         private readonly int _port;
         private readonly string _saveDirectory;
         private volatile bool _isRunning;
@@ -35,8 +36,9 @@ namespace TrFileTransfer
         /// <summary>Whether the server is currently listening.</summary>
         public bool IsRunning { get { return _isRunning; } }
 
-        public TransferUdpServer(int port, string saveDirectory)
+        public TransferUdpServer(string bindAddress, int port, string saveDirectory)
         {
+            _bindAddress = bindAddress;
             _port = port;
             _saveDirectory = saveDirectory;
         }
@@ -46,9 +48,12 @@ namespace TrFileTransfer
             _cts = new CancellationTokenSource();
             try
             {
+                IPAddress bindIp;
+                if (!IPAddress.TryParse(_bindAddress, out bindIp))
+                    bindIp = IPAddress.Any;
                 _udp = new UdpClient();
                 _udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-                _udp.Client.Bind(new IPEndPoint(IPAddress.Any, _port));
+                _udp.Client.Bind(new IPEndPoint(bindIp, _port));
                 _udp.Client.ReceiveBufferSize = 4 * 1024 * 1024;
                 _udp.Client.SendBufferSize = 4 * 1024 * 1024;
             }

@@ -189,7 +189,7 @@ namespace TrFileTransfer.Tests
                 bool serverOk = false;
                 string serverError = null;
 
-                server = new TransferUdpServer(port, recvDir);
+                server = new TransferUdpServer("127.0.0.1", port, recvDir);
                 server.OnStarted += () => serverStarted.Set();
                 server.OnSessionStarted += session =>
                 {

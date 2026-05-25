@@ -466,7 +466,7 @@ namespace TrFileTransfer
             if (_chkServerUdp.Checked)
             {
                 bool udpStarted = false;
-                _serverUdp = new TransferUdpServer(port, saveDir);
+                _serverUdp = new TransferUdpServer(bindAddr, port, saveDir);
                 _serverUdp.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
                 _serverUdp.OnSessionStarted += session => this.Invoke((Action)(() =>
                 {
