@@ -342,19 +342,16 @@ namespace TrFileTransfer
 
                     if (timedOut && expectedSeq > 0)
                     {
+                        // Re-send last cumulative ACK on timeout to help client advance window
                         try
                         {
                             var ack = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
-                            await _udp.SendAsync(ack, ack.Length, _clientEp).ConfigureAwait(false);
+                            _udp.Send(ack, ack.Length, _clientEp);
                         }
                         catch { }
                     }
 
-                    bool shouldSendAck = (unackedSinceLastAck >= AckBatchCount);
-                    if (!shouldSendAck && unackedSinceLastAck > 0)
-                        shouldSendAck = (Stopwatch.GetTimestamp() - lastAckTimestamp)
-                            * 1000.0 / Stopwatch.Frequency >= 50;
-                    if (shouldSendAck)
+                    if (unackedSinceLastAck >= AckBatchCount)
                     {
                         var batchAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
                         await _udp.SendAsync(batchAck, batchAck.Length, _clientEp).ConfigureAwait(false);
@@ -365,6 +362,17 @@ namespace TrFileTransfer
 
                 if (writeBufPos > 0)
                     await fileStream.WriteAsync(writeBuf, 0, writeBufPos, ct).ConfigureAwait(false);
+            }
+
+            // Send final cumulative ACK for remaining unacknowledged chunks
+            if (unackedSinceLastAck > 0 && expectedSeq > 0)
+            {
+                try
+                {
+                    var finalAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, expectedSeq - 1, null);
+                    _udp.Send(finalAck, finalAck.Length, _clientEp);
+                }
+                catch { }
             }
 
             if (!finProcessed) return;
