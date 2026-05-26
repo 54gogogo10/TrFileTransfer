@@ -115,6 +115,12 @@ namespace TrFileTransfer
                 string dir = Path.GetDirectoryName(savePath);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
             }
+            else if (isChunked)
+            {
+                fileName = Path.GetFileName(fileName);
+                if (string.IsNullOrWhiteSpace(fileName)) fileName = "received_file";
+                savePath = Path.Combine(_saveDirectory, fileName + ".chunk_" + Guid.NewGuid().ToString("N"));
+            }
             else
             {
                 fileName = Path.GetFileName(fileName);
