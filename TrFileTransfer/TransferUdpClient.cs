@@ -92,8 +92,8 @@ namespace TrFileTransfer
         private UdpClient CreateUdpClient()
         {
             var udp = _localPort > 0 ? new UdpClient(_localPort) : new UdpClient();
-            udp.Client.SendBufferSize = 4 * 1024 * 1024;
-            udp.Client.ReceiveBufferSize = 4 * 1024 * 1024;
+            udp.Client.SendBufferSize = 8 * 1024 * 1024;
+            udp.Client.ReceiveBufferSize = 8 * 1024 * 1024;
             return udp;
         }
 
