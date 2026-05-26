@@ -56,25 +56,36 @@ namespace TrFileTransfer
             long chunkSize = (totalSize + chunks - 1) / chunks;
             _totalBytes = totalSize;
 
-            Log(string.Format("Concurrent send: {0} in {1} chunks", fileName, chunks));
+            Log(string.Format("{0} send: {1} in {2} chunks",
+                _isUdp ? "Sequential UDP" : "Concurrent", fileName, chunks));
 
-            var tasks = new List<Task>();
             var cts = new CancellationTokenSource();
-
-            for (int i = 0; i < chunks; i++)
-            {
-                long offset = i * chunkSize;
-                long size = Math.Min(chunkSize, totalSize - offset);
-                if (size <= 0) break;
-
-                int localPort = FindLocalPort(i);
-                var task = SendChunkAsync(offset, size, totalSize, localPort);
-                tasks.Add(task);
-            }
 
             try
             {
-                await Task.WhenAll(tasks);
+                if (_isUdp)
+                {
+                    // UDP: send chunks one at a time to avoid buffer overflow
+                    for (int i = 0; i < chunks; i++)
+                    {
+                        long offset = i * chunkSize;
+                        long size = Math.Min(chunkSize, totalSize - offset);
+                        if (size <= 0) break;
+                        await SendChunkAsync(offset, size, totalSize, FindLocalPort(i));
+                    }
+                }
+                else
+                {
+                    var tasks = new List<Task>();
+                    for (int i = 0; i < chunks; i++)
+                    {
+                        long offset = i * chunkSize;
+                        long size = Math.Min(chunkSize, totalSize - offset);
+                        if (size <= 0) break;
+                        tasks.Add(SendChunkAsync(offset, size, totalSize, FindLocalPort(i)));
+                    }
+                    await Task.WhenAll(tasks);
+                }
                 var completeHandler = OnTransferComplete;
                 if (completeHandler != null) completeHandler();
             }
