@@ -266,7 +266,7 @@ namespace TrFileTransfer
                 const int ReadBufSize = 1048576;
                 byte[] readBuf = new byte[ReadBufSize];
                 int bufStartSeq = -1, bufDataLen = 0;
-                var sendSemaphore = new SemaphoreSlim(64);
+                var sendSemaphore = new SemaphoreSlim(16);
 
                 Log(string.Format("Blasting {0} chunks...", totalChunks));
                 var sendTasks = new System.Collections.Generic.List<System.Threading.Tasks.Task<int>>();
