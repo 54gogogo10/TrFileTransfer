@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -198,6 +199,8 @@ namespace TrFileTransfer
                     else if (pktType == UdpProtocol.TypeFin)
                     {
                         finReceived = true;
+                        Log(string.Format("FIN received, received {0}/{1} chunks",
+                            received.Count(b => b), totalChunks));
                         if (pktBodyLen >= 32)
                         {
                             clientHash = new byte[32];
@@ -222,8 +225,8 @@ namespace TrFileTransfer
 
                     if (missing.Count == 0) { allReceived = true; break; }
 
-                    Log(string.Format("Missing {0}/{1} chunks, requesting retransmit...",
-                        missing.Count, totalChunks));
+                    Log(string.Format("Missing {0}/{1}, sending report via _sendUdp to {2}",
+                        missing.Count, totalChunks, _clientEp));
                     var reportBody = new byte[4 + missing.Count * 4];
                     Buffer.BlockCopy(BitConverter.GetBytes(missing.Count), 0, reportBody, 0, 4);
                     for (int i = 0; i < missing.Count; i++)
