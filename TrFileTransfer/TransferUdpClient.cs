@@ -227,6 +227,7 @@ namespace TrFileTransfer
             await _udp.SendAsync(hello, hello.Length, serverEp);
 
             bool helloAcked = false;
+            int dataPort = _port;
             int timeoutCount = 0;
             while (!helloAcked && timeoutCount <= UdpProtocol.MaxRetries && !ct.IsCancellationRequested)
             {
@@ -236,11 +237,16 @@ namespace TrFileTransfer
                     var result = await _udp.ReceiveAsync().ConfigureAwait(false);
                     byte t; int s, bl;
                     if (UdpProtocol.ParseHeader(result.Buffer, out t, out s, out bl)
-                        && t == UdpProtocol.TypeAck && s == 0) helloAcked = true;
+                        && t == UdpProtocol.TypeAck && s == 0)
+                    {
+                        helloAcked = true;
+                        if (bl >= 4) dataPort = BitConverter.ToInt32(result.Buffer, UdpProtocol.HeaderSize);
+                    }
                 }
                 catch (SocketException) { timeoutCount++; }
             }
             if (!helloAcked) return;
+            if (dataPort != _port) serverEp = new IPEndPoint(serverEp.Address, dataPort);
 
             bool ok = await SendUdpFileDataAsync(_udp, serverEp, _filePath, chunkSize,
                 fileName, ct, reportProgress: true, fileOffset: offset);

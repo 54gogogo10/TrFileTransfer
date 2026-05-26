@@ -49,6 +49,7 @@ namespace TrFileTransfer
         {
             _disposed = true;
             try { _recvUdp.Close(); } catch { }
+            try { _sendUdp.Close(); } catch { }
         }
 
         public async Task RunAsync(byte[] helloPacket, CancellationToken ct)
@@ -66,6 +67,7 @@ namespace TrFileTransfer
             {
                 IsRunning = false;
                 try { _recvUdp.Close(); } catch { }
+                try { _sendUdp.Close(); } catch { }
                 var stoppedHandler = OnStopped;
                 if (stoppedHandler != null) stoppedHandler();
             }
@@ -288,9 +290,6 @@ namespace TrFileTransfer
                 if (completeHandler != null) completeHandler();
             }
         }
-
-        private static readonly ConcurrentDictionary<string, ChunkTracker> _chunkTrackers_legacy
-            = new ConcurrentDictionary<string, ChunkTracker>();
 
         private void Log(string msg) { Utils.LogTo(OnLog, msg); }
     }
