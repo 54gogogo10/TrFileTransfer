@@ -166,6 +166,15 @@ namespace TrFileTransfer
                 else
                 {
                     var client = new TransferClient(_serverIp, _port, _filePath, localPort);
+                    long baseTransferred = _transferredBytes;
+                    client.OnProgress += p =>
+                    {
+                        lock (_progressLock)
+                        {
+                            _transferredBytes = baseTransferred + p.BytesTransferred;
+                            ReportProgress(_filePath);
+                        }
+                    };
                     await client.SendChunkedAsync(offset, size, totalSize);
                 }
 
