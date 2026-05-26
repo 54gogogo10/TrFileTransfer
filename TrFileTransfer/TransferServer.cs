@@ -322,7 +322,7 @@ namespace TrFileTransfer
             }
             else
             {
-                // Clean up tracker on hash failure (prevents orphaned tracker)
+                // Clean up tracker on hash failure
                 ChunkTracker removed;
                 if (_chunkTrackers.TryRemove(fileName, out removed))
                 {

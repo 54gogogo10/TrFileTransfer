@@ -50,8 +50,11 @@ namespace TrFileTransfer
                 return;
             }
 
-            int chunks = (int)Math.Min(_concurrency,
-                (totalSize + UdpProtocol.MaxChunkSize - 1) / UdpProtocol.MaxChunkSize);
+            // Ensure each chunk ≤ 4 MB to protect server memory
+            const long MaxChunkSize = 4 * 1024 * 1024;
+            int minChunks = (int)((totalSize + MaxChunkSize - 1) / MaxChunkSize);
+            int chunks = Math.Max(minChunks, Math.Min(_concurrency,
+                (int)((totalSize + UdpProtocol.MaxChunkSize - 1) / UdpProtocol.MaxChunkSize)));
             chunks = Math.Max(1, chunks);
             long chunkSize = (totalSize + chunks - 1) / chunks;
             _totalBytes = totalSize;
