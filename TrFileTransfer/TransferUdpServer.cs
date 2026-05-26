@@ -111,6 +111,7 @@ namespace TrFileTransfer
 
                     if (pktType == UdpProtocol.TypeHello)
                     {
+                        Log(string.Format("HELLO from {0}", clientEp));
                         TransferUdpSession session;
                         bool isNew = false;
                         if (!_sessions.TryGetValue(clientEp, out session))
@@ -145,6 +146,9 @@ namespace TrFileTransfer
                     {
                         TransferUdpSession session;
                         _sessions.TryGetValue(clientEp, out session);
+                        if (session == null) Log(string.Format("DROP {0} seq={1} from {2} (no session)",
+                            pktType == UdpProtocol.TypeData ? "DATA" : pktType == UdpProtocol.TypeFin ? "FIN" : "FOLDER_END",
+                            pktSeq, clientEp));
                         bool enqueued = false;
                         if (session != null)
                             enqueued = session.EnqueuePacket(result.Buffer);
