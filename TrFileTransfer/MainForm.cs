@@ -159,7 +159,7 @@ namespace TrFileTransfer
             _numConcurrency = new NumericUpDown
             {
                 Location = new Point(335, 92), Width = 45,
-                Minimum = 1, Maximum = 64, Value = 1
+                Minimum = 1, Maximum = 256, Value = 1
             };
             _btnAbout = new Button { Location = new Point(395, 14), Width = 75, Height = 23 };
             _btnAbout.Click += BtnAbout_Click;

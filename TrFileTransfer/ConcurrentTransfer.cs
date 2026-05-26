@@ -32,7 +32,7 @@ namespace TrFileTransfer
             _serverIp = serverIp;
             _port = port;
             _filePath = filePath;
-            _concurrency = Math.Max(1, Math.Min(64, concurrency));
+            _concurrency = Math.Max(1, Math.Min(256, concurrency));
             _isUdp = !isTcp;
         }
 
