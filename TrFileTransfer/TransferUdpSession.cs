@@ -141,7 +141,6 @@ namespace TrFileTransfer
             using (var fileStream = new FileStream(savePath, FileMode.Create, FileAccess.ReadWrite,
                 FileShare.None, 65536, FileOptions.RandomAccess))
             {
-                fileStream.SetLength(fileSize);
 
                 while (!finReceived && !ct.IsCancellationRequested && !_disposed)
                 {
@@ -169,7 +168,7 @@ namespace TrFileTransfer
                         // Write at correct file offset (supports out-of-order arrival)
                         long destOffset = (long)pktSeq * UdpProtocol.MaxChunkSize;
                         fileStream.Seek(destOffset, SeekOrigin.Begin);
-                        fileStream.Write(packet, dataOffset, dataLen);
+                        await fileStream.WriteAsync(packet, dataOffset, dataLen, ct).ConfigureAwait(false);
 
                         if (progressTimer.ElapsedMilliseconds >= 100)
                         {
@@ -210,45 +209,45 @@ namespace TrFileTransfer
                     {
                         fileStream.Flush();
                         fileStream.Dispose();
-                        var actualHash = SHA256.Create().ComputeHash(File.ReadAllBytes(savePath));
-                        bool hashOk = clientHash != null
-                            ? Utils.ConstantTimeEquals(clientHash, actualHash)
-                            : true;
-
-                        if (hashOk)
+                        bool hashOk;
+                        using (var fs = new FileStream(savePath, FileMode.Open, FileAccess.Read, FileShare.Read))
                         {
-                            var finAck = UdpProtocol.BuildPacket(UdpProtocol.TypeFinAck, 0, null);
-                            try { _udp.Send(finAck, finAck.Length, _clientEp); } catch { }
-                            Log(L.S_TransferDone(fileName, Utils.FormatSize(fileSize),
-                                sw.Elapsed.TotalSeconds, Utils.FormatSize((long)(fileSize / Math.Max(sw.Elapsed.TotalSeconds, 0.001)))));
-                            var completeHandler = OnTransferComplete;
-                            if (completeHandler != null) completeHandler();
+                            var actualHash = SHA256.Create().ComputeHash(fs);
+                            hashOk = clientHash != null
+                                ? Utils.ConstantTimeEquals(clientHash, actualHash)
+                                : false; // require hash from client
+                        }
 
-                            // Chunked: copy to ChunkTracker
-                            if (isChunked)
+                        if (!hashOk)
+                        {
+                            var finNak = UdpProtocol.BuildPacket(UdpProtocol.TypeFin, 0, new byte[1]);
+                            try { _udp.Send(finNak, finNak.Length, _clientEp); } catch { }
+                            return;
+                        }
+
+                        // Chunked: copy to ChunkTracker BEFORE sending FIN_ACK
+                        if (isChunked)
+                        {
+                            ChunkTracker tracker = ChunkTracker.GetOrCreate(
+                                _chunkTrackers, fileName, totalFileSize, _saveDirectory);
+                            byte[] chunkData = File.ReadAllBytes(savePath);
+                            try { File.Delete(savePath); } catch { }
+                            bool cComplete = tracker.WriteChunk(chunkOffset, chunkData, 4096);
+                            if (cComplete)
                             {
-                                ChunkTracker tracker = ChunkTracker.GetOrCreate(
-                                    _chunkTrackers, fileName, totalFileSize, _saveDirectory);
-                                byte[] chunkData = File.ReadAllBytes(savePath);
-                                try { File.Delete(savePath); } catch { }
-                                bool cComplete = tracker.WriteChunk(chunkOffset, chunkData, 4096);
-                                if (cComplete)
-                                {
-                                    tracker.Dispose();
-                                    ChunkTracker removed;
-                                    _chunkTrackers.TryRemove(fileName, out removed);
-                                    var ccHandler = OnTransferComplete;
-                                    if (ccHandler != null) ccHandler();
-                                }
+                                tracker.Dispose();
+                                ChunkTracker removed;
+                                _chunkTrackers.TryRemove(fileName, out removed);
                             }
-                            return;
                         }
-                        else
-                        {
-                            var finFail = UdpProtocol.BuildPacket(UdpProtocol.TypeFin, 0, new byte[1]);
-                            try { _udp.Send(finFail, finFail.Length, _clientEp); } catch { }
-                            return;
-                        }
+
+                        var finAck = UdpProtocol.BuildPacket(UdpProtocol.TypeFinAck, 0, null);
+                        try { _udp.Send(finAck, finAck.Length, _clientEp); } catch { }
+                        Log(L.S_TransferDone(fileName, Utils.FormatSize(fileSize),
+                            sw.Elapsed.TotalSeconds, Utils.FormatSize((long)(fileSize / Math.Max(sw.Elapsed.TotalSeconds, 0.001)))));
+                        var completeHandler = OnTransferComplete;
+                        if (completeHandler != null) completeHandler();
+                        return;
                     }
 
                     Log(string.Format("Missing {0}/{1} chunks, requesting retransmit...",
