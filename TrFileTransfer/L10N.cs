@@ -45,6 +45,9 @@ namespace TrFileTransfer
         public static string AboutBtn { get { return IsChinese ? "关于" : "About"; } }
         public static string AboutTitle { get { return IsChinese ? "关于" : "About"; } }
         public static string AboutText { get { return IsChinese ? "TrFileTransfer v1.0\r\n局域网文件传输工具\r\nSHA-256 完整性校验" : "TrFileTransfer v1.0\r\nLAN file transfer tool\r\nSHA-256 integrity verification"; } }
+        public static string ExportLog { get { return IsChinese ? "导出日志" : "Export Log"; } }
+        public static string ExportLogTitle { get { return IsChinese ? "导出日志" : "Export Log"; } }
+        public static string ExportLogFailed { get { return IsChinese ? "导出失败: " : "Export failed: "; } }
 
         public static string SpeedPrefix { get { return IsChinese ? "速度: " : "Speed: "; } }
         public static string Transferring(object fileName, string eta)

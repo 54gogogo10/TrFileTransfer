@@ -61,6 +61,7 @@ namespace TrFileTransfer
         // Log
         private GroupBox _gbLog;
         private ListBox _lstLog;
+        private Button _btnExportLog;
 
         // State
         private TransferServer _server;
@@ -207,7 +208,10 @@ namespace TrFileTransfer
             // Log panel
             _gbLog = new GroupBox { Location = new Point(12, 596), Size = new Size(580, 170) };
             _lstLog = new ListBox { Location = new Point(10, 20), Width = 555, Height = 140, IntegralHeight = false, Font = new Font("Consolas", 8.5f) };
+            _btnExportLog = new Button { Location = new Point(485, 145), Width = 80, Height = 22 };
+            _btnExportLog.Click += BtnExportLog_Click;
             _gbLog.Controls.Add(_lstLog);
+            _gbLog.Controls.Add(_btnExportLog);
 
             Controls.Add(_cmbLang);
             Controls.Add(_btnAbout);
@@ -252,6 +256,7 @@ namespace TrFileTransfer
             _gbProgressC.Text = L.ClientProgress;
 
             _gbLog.Text = L.LogGroup;
+            _btnExportLog.Text = L.ExportLog;
 
             PopulateBindAddresses();
         }
@@ -1028,6 +1033,32 @@ namespace TrFileTransfer
             }
 
             return false;
+        }
+
+        private void BtnExportLog_Click(object sender, EventArgs e)
+        {
+            using (var dlg = new SaveFileDialog())
+            {
+                dlg.Title = L.ExportLogTitle;
+                dlg.Filter = "Log files (*.log)|*.log|Text files (*.txt)|*.txt|All files (*.*)|*.*";
+                dlg.DefaultExt = "log";
+                dlg.FileName = "TrFileTransfer_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".log";
+                if (dlg.ShowDialog() == DialogResult.OK)
+                {
+                    try
+                    {
+                        var lines = new string[_lstLog.Items.Count];
+                        for (int i = 0; i < lines.Length; i++)
+                            lines[i] = _lstLog.Items[i].ToString();
+                        File.WriteAllLines(dlg.FileName, lines);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show(L.ExportLogFailed + ex.Message, L.DlgError,
+                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
         }
 
         private void BtnAbout_Click(object sender, EventArgs e)
