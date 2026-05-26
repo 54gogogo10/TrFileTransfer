@@ -36,9 +36,9 @@ namespace TrFileTransfer
             ConcurrentDictionary<string, ChunkTracker> chunkTrackers = null)
         {
             _recvUdp = new UdpClient(0);
-            _recvUdp.Client.ReceiveBufferSize = 8 * 1024 * 1024;
+            _recvUdp.Client.ReceiveBufferSize = 32 * 1024 * 1024;
             _sendUdp = new UdpClient();
-            _sendUdp.Client.SendBufferSize = 8 * 1024 * 1024;
+            _sendUdp.Client.SendBufferSize = 32 * 1024 * 1024;
             _clientEp = clientEp;
             _saveDirectory = saveDirectory;
             _chunkTrackers = chunkTrackers ?? new ConcurrentDictionary<string, ChunkTracker>();

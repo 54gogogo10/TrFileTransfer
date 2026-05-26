@@ -92,8 +92,8 @@ namespace TrFileTransfer
         private UdpClient CreateUdpClient()
         {
             var udp = _localPort > 0 ? new UdpClient(_localPort) : new UdpClient();
-            udp.Client.SendBufferSize = 8 * 1024 * 1024;
-            udp.Client.ReceiveBufferSize = 8 * 1024 * 1024;
+            udp.Client.SendBufferSize = 32 * 1024 * 1024;
+            udp.Client.ReceiveBufferSize = 32 * 1024 * 1024;
             return udp;
         }
 
@@ -276,7 +276,7 @@ namespace TrFileTransfer
                 const int ReadBufSize = 1048576;
                 byte[] readBuf = new byte[ReadBufSize];
                 int bufStartSeq = -1, bufDataLen = 0;
-                var sendSemaphore = new SemaphoreSlim(16);
+                var sendSemaphore = new SemaphoreSlim(64);
 
                 Log(string.Format("Blasting {0} chunks...", totalChunks));
                 var sendTasks = new System.Collections.Generic.List<System.Threading.Tasks.Task<int>>();

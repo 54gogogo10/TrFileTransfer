@@ -52,8 +52,8 @@ namespace TrFileTransfer
                 if (!IPAddress.TryParse(_bindAddress, out bindIp))
                     bindIp = IPAddress.Any;
                 _udp = new UdpClient();
-                _udp.Client.SendBufferSize = 8 * 1024 * 1024;
-                _udp.Client.ReceiveBufferSize = 8 * 1024 * 1024; // must be set BEFORE Bind to exceed 64KB
+                _udp.Client.SendBufferSize = 32 * 1024 * 1024;
+                _udp.Client.ReceiveBufferSize = 32 * 1024 * 1024;
                 _udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
                 _udp.Client.Bind(new IPEndPoint(bindIp, _port));
             }
