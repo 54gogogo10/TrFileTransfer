@@ -257,9 +257,10 @@ namespace TrFileTransfer
                 sw.Stop();
 
                 bool hashOk;
+                using (var fs = new FileStream(savePath, FileMode.Open, FileAccess.Read, FileShare.Read, 65536))
                 using (var sha256 = SHA256.Create())
                 {
-                    var actualHash = sha256.ComputeHash(File.ReadAllBytes(savePath));
+                    var actualHash = sha256.ComputeHash(fs);
                     hashOk = clientHash != null
                         ? Utils.ConstantTimeEquals(clientHash, actualHash)
                         : false;
