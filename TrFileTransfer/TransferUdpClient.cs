@@ -267,7 +267,7 @@ namespace TrFileTransfer
 
                 const int ReadBufSize = 1048576;
                 byte[] readBuf = new byte[ReadBufSize];
-                int bufStartSeq = -1, bufDataLen = 0, hashedUpTo = -1;
+                int bufStartSeq = -1, bufDataLen = 0;
                 var sendSemaphore = new SemaphoreSlim(64);
 
                 Log(string.Format("Blasting {0} chunks...", totalChunks));
@@ -299,7 +299,7 @@ namespace TrFileTransfer
                     var st = udp.SendAsync(dp, dp.Length, serverEp);
                     sendTasks.Add(st);
                     var ct2 = st; var _ = ct2.ContinueWith(t => sendSemaphore.Release());
-                    if (seq > hashedUpTo) { sha256.TransformBlock(readBuf, bufOff, mSize, null, 0); hashedUpTo = seq; }
+                    sha256.TransformBlock(readBuf, bufOff, mSize, null, 0);
 
                     if (reportProgress && progressTimer.ElapsedMilliseconds >= 100)
                     {
