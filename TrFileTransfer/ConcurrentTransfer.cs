@@ -49,7 +49,8 @@ namespace TrFileTransfer
                 return;
             }
 
-            int chunks = Math.Min(_concurrency,
+            int effConcurrency = _isUdp ? Math.Min(4, _concurrency) : _concurrency;
+            int chunks = Math.Min(effConcurrency,
                 (int)((totalSize + UdpProtocol.MaxChunkSize - 1) / UdpProtocol.MaxChunkSize));
             chunks = Math.Max(1, chunks);
             long chunkSize = (totalSize + chunks - 1) / chunks;
