@@ -32,13 +32,18 @@ namespace TrFileTransfer
 
         private readonly ConcurrentDictionary<string, ChunkTracker> _chunkTrackers;
 
+        private static int _sessionCount;
+        private const int TotalBufBudget = 128 * 1024 * 1024; // 128 MB total across all sessions
+
         public TransferUdpSession(IPEndPoint clientEp, string saveDirectory,
             ConcurrentDictionary<string, ChunkTracker> chunkTrackers = null)
         {
+            int count = Interlocked.Increment(ref _sessionCount);
+            int bufSize = Math.Max(256 * 1024, TotalBufBudget / Math.Max(1, count));
             _recvUdp = new UdpClient(0);
-            _recvUdp.Client.ReceiveBufferSize = 32 * 1024 * 1024;
+            _recvUdp.Client.ReceiveBufferSize = bufSize;
             _sendUdp = new UdpClient();
-            _sendUdp.Client.SendBufferSize = 32 * 1024 * 1024;
+            _sendUdp.Client.SendBufferSize = bufSize;
             _clientEp = clientEp;
             _saveDirectory = saveDirectory;
             _chunkTrackers = chunkTrackers ?? new ConcurrentDictionary<string, ChunkTracker>();
@@ -48,6 +53,7 @@ namespace TrFileTransfer
         public void Stop()
         {
             _disposed = true;
+            Interlocked.Decrement(ref _sessionCount);
             try { _recvUdp.Close(); } catch { }
             try { _sendUdp.Close(); } catch { }
         }
