@@ -9,9 +9,9 @@ namespace TrFileTransfer
         public const int Magic = 0x55445054;
         /// <summary>Packet header size: magic(4) + type(1) + reserved(1) + seq(4) + bodyLen(4).</summary>
         public const int HeaderSize = 14;
-        /// <summary>Maximum payload per data chunk (4096 bytes — ~3 IP fragments, balance of throughput vs loss amplification).</summary>
-        public const int MaxChunkSize = 4096;
-        /// <summary>Default sliding window size in chunks (512 × 4096 = 2 MB per window).</summary>
+        /// <summary>Maximum payload per data chunk (1400 bytes — fits within typical MTU, avoids IP fragmentation).</summary>
+        public const int MaxChunkSize = 1400;
+        /// <summary>Default sliding window size in chunks (512 × 1400 ≈ 700 KB per window).</summary>
         public const int DefaultWindowSize = 512;
         /// <summary>Default receive timeout in milliseconds (fallback before RTT measurement).</summary>
         public const int TimeoutMs = 3000;
