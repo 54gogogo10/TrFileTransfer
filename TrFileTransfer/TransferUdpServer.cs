@@ -116,7 +116,7 @@ namespace TrFileTransfer
                         bool isNew = false;
                         if (!_sessions.TryGetValue(clientEp, out session))
                         {
-                            session = new TransferUdpSession(_udp, clientEp, _saveDirectory, _chunkTrackers);
+                            session = new TransferUdpSession(clientEp, _saveDirectory, _chunkTrackers);
                             session.OnLog += msg => Utils.LogTo(OnLog, msg);
                             session.OnError += msg => Utils.LogTo(OnLog, msg);
                             session.OnStopped += () =>
@@ -136,28 +136,14 @@ namespace TrFileTransfer
                         }
                         else if (session != null)
                         {
-                            // Retransmitted HELLO — re-send ACK without restarting session
-                            var helloAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, 0, null);
+                            // Retransmitted HELLO — re-send ACK with data port
+                            var ackBody = BitConverter.GetBytes(session.DataPort);
+                            var helloAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, 0, ackBody);
                             try { await _udp.SendAsync(helloAck, helloAck.Length, clientEp).ConfigureAwait(false); }
                             catch { }
                         }
                     }
-                    else if (pktType == UdpProtocol.TypeData || pktType == UdpProtocol.TypeFin || pktType == UdpProtocol.TypeFolderEnd)
-                    {
-                        TransferUdpSession session;
-                        _sessions.TryGetValue(clientEp, out session);
-                        if (session == null) Log(string.Format("DROP {0} seq={1} from {2} (no session)",
-                            pktType == UdpProtocol.TypeData ? "DATA" : pktType == UdpProtocol.TypeFin ? "FIN" : "FOLDER_END",
-                            pktSeq, clientEp));
-                        bool enqueued = false;
-                        if (session != null)
-                            enqueued = session.EnqueuePacket(result.Buffer);
-                        if (!enqueued && pktType == UdpProtocol.TypeFolderEnd)
-                        {
-                            var ack = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, 0, null);
-                            try { await _udp.SendAsync(ack, ack.Length, clientEp); } catch { }
-                        }
-                    }
+                    // Data/Fin go directly to session's dedicated receive socket — nothing to do here
                 }
                 catch (ObjectDisposedException) { break; }
                 catch (OperationCanceledException) { break; }

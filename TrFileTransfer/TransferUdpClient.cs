@@ -115,9 +115,11 @@ namespace TrFileTransfer
 
             Log(L.UdpC_Sending(fileName, Utils.FormatSize(fileSize), 0));
 
-            if (!await WaitForAckAsync()) return;
+            int dataPort = await WaitForAckAsync();
+            if (dataPort == 0) return;
+            if (dataPort != _port) serverEp = new IPEndPoint(serverEp.Address, dataPort);
 
-            Log("HELLO ACK received, starting data transfer...");
+            Log(string.Format("HELLO ACK received (data port={0}), starting...", dataPort));
             var sw = System.Diagnostics.Stopwatch.StartNew();
             bool ok = await SendUdpFileDataAsync(_udp, serverEp, _filePath, fileSize, fileName, ct, reportProgress: true);
             sw.Stop();
@@ -171,8 +173,10 @@ namespace TrFileTransfer
                 var helloBody = BuildHelloBody(0x01, entry.Size, pathBytes);
                 var helloPacket = UdpProtocol.BuildPacket(UdpProtocol.TypeHello, 0, helloBody);
                 await _udp.SendAsync(helloPacket, helloPacket.Length, serverEp).ConfigureAwait(false);
-                if (!await WaitForAckAsync()) return;
-                bool ok = await SendUdpFileDataAsync(_udp, serverEp, entry.Path, entry.Size,
+                int dp = await WaitForAckAsync();
+                if (dp == 0) return;
+                var fep = dp != _port ? new IPEndPoint(serverEp.Address, dp) : serverEp;
+                bool ok = await SendUdpFileDataAsync(_udp, fep, entry.Path, entry.Size,
                     entry.RelativePath, ct, reportProgress: false);
                 if (!ok) return;
                 totalSent += entry.Size;
@@ -185,7 +189,7 @@ namespace TrFileTransfer
 
             var folderEndPacket = UdpProtocol.BuildPacket(UdpProtocol.TypeFolderEnd, 0, null);
             await _udp.SendAsync(folderEndPacket, folderEndPacket.Length, serverEp).ConfigureAwait(false);
-            if (!await WaitForAckAsync()) { Log(L.UdpC_FolderNotConfirmed); return; }
+            if (await WaitForAckAsync() == 0) { Log(L.UdpC_FolderNotConfirmed); return; }
             sw.Stop();
             Log(L.C_FolderTransferDone(folderName, files.Length, Utils.FormatSize(totalSize),
                 sw.Elapsed.TotalSeconds, Utils.FormatSize((long)(totalSize / Math.Max(sw.Elapsed.TotalSeconds, 0.001)))));
@@ -370,7 +374,7 @@ namespace TrFileTransfer
             }
         }
 
-        private async Task<bool> WaitForAckAsync()
+        private async Task<int> WaitForAckAsync()
         {
             _udp.Client.ReceiveTimeout = UdpProtocol.TimeoutMs;
             try
@@ -380,10 +384,15 @@ namespace TrFileTransfer
                     var result = await _udp.ReceiveAsync().ConfigureAwait(false);
                     byte ackType; int ackSeq, ackBodyLen;
                     if (UdpProtocol.ParseHeader(result.Buffer, out ackType, out ackSeq, out ackBodyLen)
-                        && ackType == UdpProtocol.TypeAck && ackSeq == 0) return true;
+                        && ackType == UdpProtocol.TypeAck && ackSeq == 0)
+                    {
+                        if (ackBodyLen >= 4)
+                            return BitConverter.ToInt32(result.Buffer, UdpProtocol.HeaderSize);
+                        return _port; // old server without port assignment
+                    }
                 }
             }
-            catch (SocketException) { Log(L.UdpC_ServerNotResponding); return false; }
+            catch (SocketException) { Log(L.UdpC_ServerNotResponding); return 0; }
         }
 
         private void Log(string msg) { Utils.LogTo(OnLog, msg); }
