@@ -278,6 +278,11 @@ namespace TrFileTransfer
                 int bufStartSeq = -1, bufDataLen = 0;
                 var sendSemaphore = new SemaphoreSlim(64);
 
+                // Rate limiter: target ~100 MB/s (bytes per stopwatch tick)
+                const long TargetBytesPerSec = 100000000;
+                long rateStartTick = Stopwatch.GetTimestamp();
+                long bytesSent = 0;
+
                 Log(string.Format("Blasting {0} chunks...", totalChunks));
                 var sendTasks = new System.Collections.Generic.List<System.Threading.Tasks.Task<int>>();
 
@@ -308,6 +313,20 @@ namespace TrFileTransfer
                     sendTasks.Add(st);
                     var ct2 = st; var _ = ct2.ContinueWith(t => sendSemaphore.Release());
                     sha256.TransformBlock(readBuf, bufOff, mSize, null, 0);
+                    bytesSent += mSize;
+
+                    // Rate limit every 1000 chunks
+                    if ((seq & 1023) == 0)
+                    {
+                        long elapsedTicks = Stopwatch.GetTimestamp() - rateStartTick;
+                        double elapsedSec = (double)elapsedTicks / Stopwatch.Frequency;
+                        double targetSec = (double)bytesSent / TargetBytesPerSec;
+                        if (elapsedSec < targetSec)
+                        {
+                            int delayMs = (int)((targetSec - elapsedSec) * 1000);
+                            if (delayMs > 0) await Task.Delay(delayMs, ct);
+                        }
+                    }
 
                     if (reportProgress && progressTimer.ElapsedMilliseconds >= 100)
                     {
