@@ -225,14 +225,20 @@ namespace TrFileTransfer
 
                     if (missing.Count == 0) { allReceived = true; break; }
 
-                    Log(string.Format("Missing {0}/{1}, sending report via _sendUdp to {2}",
+                    Log(string.Format("Missing {0}/{1}, sending reports via _sendUdp to {2}",
                         missing.Count, totalChunks, _clientEp));
-                    var reportBody = new byte[4 + missing.Count * 4];
-                    Buffer.BlockCopy(BitConverter.GetBytes(missing.Count), 0, reportBody, 0, 4);
-                    for (int i = 0; i < missing.Count; i++)
-                        Buffer.BlockCopy(BitConverter.GetBytes(missing[i]), 0, reportBody, 4 + i * 4, 4);
-                    var report = UdpProtocol.BuildPacket(UdpProtocol.TypeMissingReport, 0, reportBody);
-                    try { _sendUdp.Send(report, report.Length, _clientEp); } catch { }
+                    // Send missing list in batches (each fits in one UDP packet: ~1400 entries)
+                    const int MaxPerReport = 1400;
+                    for (int baseIdx = 0; baseIdx < missing.Count; baseIdx += MaxPerReport)
+                    {
+                        int batchCount = Math.Min(MaxPerReport, missing.Count - baseIdx);
+                        var reportBody = new byte[4 + batchCount * 4];
+                        Buffer.BlockCopy(BitConverter.GetBytes(batchCount), 0, reportBody, 0, 4);
+                        for (int i = 0; i < batchCount; i++)
+                            Buffer.BlockCopy(BitConverter.GetBytes(missing[baseIdx + i]), 0, reportBody, 4 + i * 4, 4);
+                        var report = UdpProtocol.BuildPacket(UdpProtocol.TypeMissingReport, 0, reportBody);
+                        try { _sendUdp.Send(report, report.Length, _clientEp); } catch { }
+                    }
 
                     _recvUdp.Client.ReceiveTimeout = 5000;
                     long deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * 30;
