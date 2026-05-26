@@ -55,6 +55,7 @@ namespace TrFileTransfer
             int minChunks = (int)((totalSize + MaxChunkSize - 1) / MaxChunkSize);
             int chunks = Math.Max(minChunks, Math.Min(_concurrency,
                 (int)((totalSize + UdpProtocol.MaxChunkSize - 1) / UdpProtocol.MaxChunkSize)));
+            chunks = Math.Min(chunks, _concurrency * 4); // cap connections to avoid resource exhaustion
             chunks = Math.Max(1, chunks);
             long chunkSize = (totalSize + chunks - 1) / chunks;
             _totalBytes = totalSize;

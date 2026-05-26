@@ -208,15 +208,12 @@ namespace TrFileTransfer
                     if (missing.Count == 0)
                     {
                         fileStream.Flush();
-                        fileStream.Dispose();
-                        bool hashOk;
-                        using (var fs = new FileStream(savePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-                        {
-                            var actualHash = SHA256.Create().ComputeHash(fs);
-                            hashOk = clientHash != null
-                                ? Utils.ConstantTimeEquals(clientHash, actualHash)
-                                : false; // require hash from client
-                        }
+                        // Compute hash from in-memory stream (ReadWrite access allows seek+read)
+                        fileStream.Seek(0, SeekOrigin.Begin);
+                        var actualHash = SHA256.Create().ComputeHash(fileStream);
+                        bool hashOk = clientHash != null
+                            ? Utils.ConstantTimeEquals(clientHash, actualHash)
+                            : false; // require hash from client
 
                         if (!hashOk)
                         {
@@ -228,11 +225,13 @@ namespace TrFileTransfer
                         // Chunked: copy to ChunkTracker BEFORE sending FIN_ACK
                         if (isChunked)
                         {
+                            fileStream.Seek(0, SeekOrigin.Begin);
                             ChunkTracker tracker = ChunkTracker.GetOrCreate(
                                 _chunkTrackers, fileName, totalFileSize, _saveDirectory);
-                            byte[] chunkData = File.ReadAllBytes(savePath);
+                            byte[] chunkData = new byte[fileSize];
+                            fileStream.Read(chunkData, 0, (int)fileSize);
                             try { File.Delete(savePath); } catch { }
-                            bool cComplete = tracker.WriteChunk(chunkOffset, chunkData, 4096);
+                            bool cComplete = tracker.WriteChunk(chunkOffset, chunkData, 65536);
                             if (cComplete)
                             {
                                 tracker.Dispose();
