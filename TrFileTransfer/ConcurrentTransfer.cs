@@ -171,7 +171,9 @@ namespace TrFileTransfer
                     {
                         lock (_progressLock)
                         {
-                            _transferredBytes = baseTransferred + p.BytesTransferred;
+                            long candidate = baseTransferred + p.BytesTransferred;
+                            if (candidate > _transferredBytes)
+                                _transferredBytes = candidate;
                             ReportProgress(_filePath);
                         }
                     };

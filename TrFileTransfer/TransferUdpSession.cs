@@ -228,7 +228,7 @@ namespace TrFileTransfer
                     Log(string.Format("Missing {0}/{1}, sending reports via _sendUdp to {2}",
                         missing.Count, totalChunks, _clientEp));
                     // Send missing list in batches (each fits in one UDP packet: ~1400 entries)
-                    const int MaxPerReport = 1400;
+                    const int MaxPerReport = 350; // 14+4+350*4=1418 < MTU 1500, no fragmentation
                     for (int baseIdx = 0; baseIdx < missing.Count; baseIdx += MaxPerReport)
                     {
                         int batchCount = Math.Min(MaxPerReport, missing.Count - baseIdx);
