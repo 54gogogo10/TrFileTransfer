@@ -15,7 +15,8 @@ namespace TrFileTransfer
     #pragma warning disable 1591
     public class TransferUdpSession
     {
-        private readonly UdpClient _udp;
+        private readonly UdpClient _udp;        // shared receive socket
+        private readonly UdpClient _sendUdp;     // dedicated send socket, avoids contention with ReceiveAsync
         private readonly IPEndPoint _clientEp;
         private readonly string _saveDirectory;
         private readonly Queue<byte[]> _packets = new Queue<byte[]>();
@@ -37,6 +38,7 @@ namespace TrFileTransfer
             ConcurrentDictionary<string, ChunkTracker> chunkTrackers = null)
         {
             _udp = udp;
+            _sendUdp = new UdpClient(); // dedicated socket for sending, avoids contention with _udp.ReceiveAsync
             _clientEp = clientEp;
             _saveDirectory = saveDirectory;
             _chunkTrackers = chunkTrackers ?? new ConcurrentDictionary<string, ChunkTracker>();
@@ -127,7 +129,7 @@ namespace TrFileTransfer
 
             Log(L.UdpS_Receiving(fileName, Utils.FormatSize(fileSize)));
             var helloAck = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, 0, null);
-            try { _udp.Send(helloAck, helloAck.Length, _clientEp); } catch { return; }
+            try { _sendUdp.Send(helloAck, helloAck.Length, _clientEp); } catch { return; }
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
             long bytesReceived = 0;
@@ -219,7 +221,7 @@ namespace TrFileTransfer
                     for (int i = 0; i < missing.Count; i++)
                         Buffer.BlockCopy(BitConverter.GetBytes(missing[i]), 0, reportBody, 4 + i * 4, 4);
                     var report = UdpProtocol.BuildPacket(UdpProtocol.TypeMissingReport, 0, reportBody);
-                    try { _udp.Send(report, report.Length, _clientEp); } catch { }
+                    try { _sendUdp.Send(report, report.Length, _clientEp); } catch { }
 
                     // Wait for retransmitted chunks (write them to file at correct offset)
                     long deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * 30;
@@ -269,7 +271,7 @@ namespace TrFileTransfer
                 if (!hashOk)
                 {
                     var finNak = UdpProtocol.BuildPacket(UdpProtocol.TypeFin, 0, new byte[1]);
-                    try { _udp.Send(finNak, finNak.Length, _clientEp); } catch { }
+                    try { _sendUdp.Send(finNak, finNak.Length, _clientEp); } catch { }
                     return;
                 }
 
@@ -289,7 +291,7 @@ namespace TrFileTransfer
                 }
 
                 var finAck = UdpProtocol.BuildPacket(UdpProtocol.TypeFinAck, 0, null);
-                try { _udp.Send(finAck, finAck.Length, _clientEp); } catch { }
+                try { _sendUdp.Send(finAck, finAck.Length, _clientEp); } catch { }
                 Log(L.S_TransferDone(fileName, Utils.FormatSize(fileSize),
                     sw.Elapsed.TotalSeconds, Utils.FormatSize((long)(fileSize / Math.Max(sw.Elapsed.TotalSeconds, 0.001)))));
                 var completeHandler = OnTransferComplete;
