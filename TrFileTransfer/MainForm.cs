@@ -207,8 +207,8 @@ namespace TrFileTransfer
 
             // Log panel
             _gbLog = new GroupBox { Location = new Point(12, 596), Size = new Size(580, 170) };
-            _lstLog = new ListBox { Location = new Point(10, 20), Width = 555, Height = 140, IntegralHeight = false, Font = new Font("Consolas", 8.5f) };
-            _btnExportLog = new Button { Location = new Point(485, 145), Width = 80, Height = 22 };
+            _lstLog = new ListBox { Location = new Point(10, 20), Width = 555, Height = 124, IntegralHeight = false, Font = new Font("Consolas", 8.5f) };
+            _btnExportLog = new Button { Location = new Point(485, 146), Width = 80, Height = 22 };
             _btnExportLog.Click += BtnExportLog_Click;
             _gbLog.Controls.Add(_lstLog);
             _gbLog.Controls.Add(_btnExportLog);
