@@ -33,7 +33,7 @@ namespace TrFileTransfer
         private readonly ConcurrentDictionary<string, ChunkTracker> _chunkTrackers;
 
         private static int _sessionCount;
-        private const int TotalBufBudget = 128 * 1024 * 1024; // 128 MB total across all sessions
+        private const int TotalBufBudget = 256 * 1024 * 1024; // 256 MB total across all sessions
 
         public TransferUdpSession(IPEndPoint clientEp, string saveDirectory,
             ConcurrentDictionary<string, ChunkTracker> chunkTrackers = null)
