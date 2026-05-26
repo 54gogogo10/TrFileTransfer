@@ -18,7 +18,6 @@ namespace TrFileTransfer
         private readonly string _serverIp;
         private readonly int _port;
         private readonly string _filePath;
-        private readonly int _windowSize;
         private readonly int _localPort;
         private volatile bool _isRunning;
 
@@ -40,7 +39,6 @@ namespace TrFileTransfer
             _port = port;
             _filePath = filePath;
             _localPort = localPort;
-            _windowSize = windowSize;
         }
 
         public async Task SendAsync()
@@ -115,7 +113,7 @@ namespace TrFileTransfer
             var helloPacket = UdpProtocol.BuildPacket(UdpProtocol.TypeHello, 0, helloBody);
             await _udp.SendAsync(helloPacket, helloPacket.Length, serverEp).ConfigureAwait(false);
 
-            Log(L.UdpC_Sending(fileName, Utils.FormatSize(fileSize), _windowSize));
+            Log(L.UdpC_Sending(fileName, Utils.FormatSize(fileSize), 0));
 
             if (!await WaitForAckAsync()) return;
 

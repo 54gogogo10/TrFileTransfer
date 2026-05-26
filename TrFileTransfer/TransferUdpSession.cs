@@ -133,7 +133,7 @@ namespace TrFileTransfer
             long bytesReceived = 0;
             int totalChunks = (int)((fileSize + UdpProtocol.MaxChunkSize - 1) / UdpProtocol.MaxChunkSize);
             var progressTimer = System.Diagnostics.Stopwatch.StartNew();
-            var receivedSeqs = new HashSet<int>();
+            var received = new bool[totalChunks];
             bool finReceived = false;
             bool allReceived = false;
             byte[] clientHash = null;
@@ -163,7 +163,7 @@ namespace TrFileTransfer
                         if (dataOffset + dataLen > packet.Length) dataLen = packet.Length - dataOffset;
                         if (dataLen <= 0) continue;
 
-                        receivedSeqs.Add(pktSeq);
+                        received[pktSeq] = true;
                         bytesReceived += dataLen;
 
                         // Write at correct file offset (supports out-of-order arrival)
@@ -203,7 +203,7 @@ namespace TrFileTransfer
                 {
                     var missing = new List<int>();
                     for (int i = 0; i < totalChunks; i++)
-                        if (!receivedSeqs.Contains(i)) missing.Add(i);
+                        if (!received[i]) missing.Add(i);
 
                     if (missing.Count == 0)
                     {
@@ -239,7 +239,7 @@ namespace TrFileTransfer
                         if (rt == UdpProtocol.TypeData && missing.Contains(rs))
                         {
                             missing.Remove(rs);
-                            receivedSeqs.Add(rs);
+                            received[rs] = true;
                             int dLen = rbl;
                             int dOff = UdpProtocol.HeaderSize;
                             if (dOff + dLen > pkt.Length) dLen = pkt.Length - dOff;

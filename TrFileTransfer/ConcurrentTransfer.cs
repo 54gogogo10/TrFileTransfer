@@ -19,7 +19,6 @@ namespace TrFileTransfer
 
         private long _totalBytes;
         private long _transferredBytes;
-        private int _completedCount;
         private readonly object _progressLock = new object();
 
         public event Action<string> OnLog;
@@ -72,8 +71,7 @@ namespace TrFileTransfer
                 if (size <= 0) break;
 
                 int localPort = FindLocalPort(i);
-                int index = i;
-                var task = SendChunkAsync(offset, size, totalSize, localPort, index, cts.Token);
+                var task = SendChunkAsync(offset, size, totalSize, localPort);
                 tasks.Add(task);
             }
 
@@ -135,7 +133,6 @@ namespace TrFileTransfer
                         await SendFileAsync(file, localPort);
                         lock (_progressLock)
                         {
-                            _completedCount++;
                             _transferredBytes += fileSize;
                             ReportProgress(Path.GetFileName(file));
                         }
@@ -162,7 +159,7 @@ namespace TrFileTransfer
         }
 
         private async Task SendChunkAsync(long offset, long size, long totalSize,
-            int localPort, int index, CancellationToken ct)
+            int localPort)
         {
             try
             {
@@ -180,13 +177,12 @@ namespace TrFileTransfer
                 lock (_progressLock)
                 {
                     _transferredBytes += size;
-                    _completedCount++;
                     ReportProgress(_filePath);
                 }
             }
             catch (Exception ex)
             {
-                Log(string.Format("Chunk {0} failed: {1}", index, ex.Message));
+                Log(string.Format("Chunk offset={0} failed: {1}", offset, ex.Message));
                 throw;
             }
         }
@@ -208,8 +204,7 @@ namespace TrFileTransfer
         private int FindLocalPort(int index)
         {
             int basePort = _port + index + 1;
-            int port = Utils.FindFreePort(basePort, _isUdp);
-            return port != 0 ? port : 0; // 0 = let OS assign if scan exhausted
+            return Utils.FindFreePort(basePort, _isUdp);
         }
 
         private void ReportProgress(string displayName)
