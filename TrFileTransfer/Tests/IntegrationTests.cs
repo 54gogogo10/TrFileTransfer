@@ -318,6 +318,6 @@ namespace TrFileTransfer.Tests
         private static void TcpLargeFile()     { ConcurrentTransferTest("tr_tcplg", true, 16, 200, 300); }
 
         private static void UdtConcurrent10()  { ConcurrentTransferTest("tr_udtc10", false, 10, 10, 120); }
-        private static void UdtConcurrent64()  { ConcurrentTransferTest("tr_udtc64", false, 64, 64, 240); }
+        private static void UdtConcurrent64()  { ConcurrentTransferTest("tr_udtc64", false, 64, 64, 120); }
     }
 }
