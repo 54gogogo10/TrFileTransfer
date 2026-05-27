@@ -19,12 +19,17 @@ namespace TrFileTransfer
         public const int ERROR = -1;
         public static readonly int SockAddrSize = Marshal.SizeOf(typeof(sockaddr_in));
 
-        // getsockopt/setsockopt option names
-        public const int UDT_RCVTIMEO = 0;
-        public const int UDT_SNDTIMEO = 1;
-        public const int UDT_SNDBUF = 2;
-        public const int UDT_RCVBUF = 3;
-        public const int UDT_MSS = 4;
+        // getsockopt/setsockopt option names (must match udt.h UDTOpt enum)
+        public const int UDT_MSS = 0;
+        public const int UDT_SNDSYN = 1;
+        public const int UDT_RCVSYN = 2;
+        public const int UDT_FC = 4;
+        public const int UDT_SNDBUF = 5;
+        public const int UDT_RCVBUF = 6;
+        public const int UDT_LINGER = 7;
+        public const int UDT_RENDEZVOUS = 12;
+        public const int UDT_SNDTIMEO = 13;
+        public const int UDT_RCVTIMEO = 14;
 
         // Reference-counted startup/cleanup so concurrent server+client don't tear each other down
         private static int _refCount;
@@ -858,6 +863,9 @@ namespace TrFileTransfer
                 _isRunning = false;
                 if (_socket >= 0)
                 {
+                    // Allow server time to receive all data before closing.
+                    // UDT over UDP means close may outpace in-flight data delivery.
+                    System.Threading.Thread.Sleep(300);
                     try { UdtNative.udt_close(_socket); } catch { }
                     _socket = -1;
                 }
