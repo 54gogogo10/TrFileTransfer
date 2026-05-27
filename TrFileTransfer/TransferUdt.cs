@@ -149,20 +149,20 @@ namespace TrFileTransfer
             {
                 if (_extracted) return;
                 string exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-                string dllPath = Path.Combine(exeDir, "udt.dll");
-                if (!File.Exists(dllPath))
-                    ExtractDll(dllPath);
+                // Extract UDT DLL and its runtime dependency (MCF thread library)
+                ExtractResource("TrFileTransfer.udt.dll", Path.Combine(exeDir, "udt.dll"));
+                ExtractResource("TrFileTransfer.libmcfgthread-2.dll", Path.Combine(exeDir, "libmcfgthread-2.dll"));
                 _extracted = true;
             }
         }
 
-        private static void ExtractDll(string primaryPath)
+        private static void ExtractResource(string resourceName, string primaryPath)
         {
-            string resourceName = "TrFileTransfer.udt.dll";
+            if (File.Exists(primaryPath)) return;
             using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName))
             {
-                if (stream == null)
-                    throw new FileNotFoundException("Embedded UDT DLL not found: " + resourceName);
+                // Resource not embedded (e.g., DLL placed manually in exe directory)
+                if (stream == null) return;
                 // Try primary path first; fall back to %TEMP% if read-only
                 string targetPath = primaryPath;
                 bool tryPrimary = true;
@@ -177,28 +177,26 @@ namespace TrFileTransfer
                         }
                         else
                         {
-                            targetPath = Path.Combine(Path.GetTempPath(), "TrFileTransfer_udt.dll");
+                            targetPath = Path.Combine(Path.GetTempPath(), Path.GetFileName(primaryPath));
                             using (var fs = new FileStream(targetPath, FileMode.Create, FileAccess.Write))
                             {
                                 stream.Seek(0, SeekOrigin.Begin);
                                 stream.CopyTo(fs);
                             }
-                            // Also set DLL directory so P/Invoke can find it
                             SetDllDirectory(Path.GetTempPath());
                         }
                         return;
                     }
                     catch (UnauthorizedAccessException)
                     {
-                        tryPrimary = false; // fall back to temp on next attempt
+                        tryPrimary = false;
                     }
                     catch (IOException)
                     {
-                        // Antivirus lock — retry after short delay
                         System.Threading.Thread.Sleep(200);
                     }
                 }
-                throw new IOException("Failed to extract udt.dll after 3 attempts");
+                throw new IOException("Failed to extract " + Path.GetFileName(primaryPath) + " after 3 attempts");
             }
         }
 

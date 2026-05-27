@@ -21,6 +21,13 @@ if exist "udt.dll" (
 ) else (
     echo   WARNING: udt.dll not found. UDT transfers will fail at runtime until udt.dll is placed alongside the exe.
 )
+set RESOURCE_MCF=
+if exist "libmcfgthread-2.dll" (
+    echo   Embedding libmcfgthread-2.dll...
+    set RESOURCE_MCF=/resource:libmcfgthread-2.dll,TrFileTransfer.libmcfgthread-2.dll
+) else (
+    echo   WARNING: libmcfgthread-2.dll not found. UDT may fail due to missing thread runtime.
+)
 
 echo.
 
@@ -35,6 +42,7 @@ echo.
     /optimize+ ^
     /doc:TrFileTransfer.xml ^
     %RESOURCE% ^
+    %RESOURCE_MCF% ^
     Config.cs ^
     Shared.cs ^
     L10N.cs ^
