@@ -421,7 +421,14 @@ namespace TrFileTransfer
                 if (transferType == 0x01)
                     completed = await HandleFolderTransfer(clientSocket, ct);
                 else if (transferType == 0x02)
-                    completed = await HandleChunkedFile(clientSocket, ct);
+                {
+                    bool fileComplete = await HandleChunkedFile(clientSocket, ct);
+                    // Chunk connection done — always clean up progress card for this endpoint.
+                    // OnTransferComplete fires separately when file is fully assembled.
+                    var ccHandler = OnClientTransferComplete;
+                    if (ccHandler != null) ccHandler(clientEp);
+                    completed = false; // don't fire again below
+                }
                 else
                     completed = await HandleFileTransfer(clientSocket, ct);
 
