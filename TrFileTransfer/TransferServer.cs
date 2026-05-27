@@ -173,14 +173,12 @@ namespace TrFileTransfer
                     await ReadExactAsync(stream, typeBuf, 0, 1, ct);
                     byte transferType = typeBuf[0];
 
-                    bool isChunked = false;
                     if (transferType == 0x01)
                     {
                         await HandleFolderTransfer(stream, ct);
                     }
                     else if (transferType == 0x02)
                     {
-                        isChunked = true;
                         await HandleChunkedFile(stream, ct);
                     }
                     else
@@ -188,11 +186,8 @@ namespace TrFileTransfer
                         await HandleFileTransfer(stream, ct);
                     }
 
-                    if (!isChunked)
-                    {
-                        var ccHandler = OnClientTransferComplete;
-                        if (ccHandler != null) ccHandler(clientEp);
-                    }
+                    var ccHandler = OnClientTransferComplete;
+                    if (ccHandler != null) ccHandler(clientEp);
                 }
                 catch (OperationCanceledException) { }
                 catch (ObjectDisposedException) { }
@@ -306,6 +301,20 @@ namespace TrFileTransfer
             if (hashOk)
             {
                 bool isComplete = tracker.WriteChunk(chunkOffset, chunkData, _bufferSize);
+
+                // Report aggregate progress across all chunks
+                var progressHandler = OnProgress;
+                if (progressHandler != null)
+                {
+                    progressHandler(new TransferProgress
+                    {
+                        BytesTransferred = tracker.BytesReceived,
+                        TotalBytes = totalSize,
+                        SpeedBytesPerSecond = 0,
+                        Elapsed = TimeSpan.Zero,
+                        FileName = fileName
+                    });
+                }
 
                 Log(L.S_ChunkOk(fileName, chunkOffset, Utils.FormatSize(chunkSize),
                     tracker.ChunksCompleted));
