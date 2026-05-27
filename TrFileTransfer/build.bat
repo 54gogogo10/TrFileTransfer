@@ -47,6 +47,7 @@ echo.
     Shared.cs ^
     L10N.cs ^
     TransferServer.cs ^
+    ConcurrentTransfer.cs ^
     TransferUdt.cs ^
     TransferClient.cs ^
     MainForm.cs ^

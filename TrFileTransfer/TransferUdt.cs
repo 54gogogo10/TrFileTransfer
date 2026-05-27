@@ -221,6 +221,8 @@ namespace TrFileTransfer
         private int _activeClients;
         private readonly System.Collections.Generic.List<int> _clientSockets
             = new System.Collections.Generic.List<int>();
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ChunkTracker> _chunkTrackers
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, ChunkTracker>();
 
         /// <summary>Fired for every log message.</summary>
         public event Action<string> OnLog;
@@ -333,6 +335,13 @@ namespace TrFileTransfer
                 try { UdtNative.udt_close(_socket); } catch { }
                 _socket = -1;
             }
+            // Clean up incomplete chunk trackers
+            foreach (var kv in _chunkTrackers)
+            {
+                ChunkTracker removed;
+                _chunkTrackers.TryRemove(kv.Key, out removed);
+                try { kv.Value.Dispose(); } catch { }
+            }
             // Close all active client sockets so HandleClient tasks unblock immediately
             lock (_clientSockets)
             {
@@ -411,6 +420,8 @@ namespace TrFileTransfer
 
                 if (transferType == 0x01)
                     completed = await HandleFolderTransfer(clientSocket, ct);
+                else if (transferType == 0x02)
+                    completed = await HandleChunkedFile(clientSocket, ct);
                 else
                     completed = await HandleFileTransfer(clientSocket, ct);
 
@@ -558,6 +569,44 @@ namespace TrFileTransfer
             return true;
         }
 
+        private async Task<bool> HandleChunkedFile(int clientSocket, CancellationToken ct)
+        {
+            var chunkHeader = new byte[28];
+            if (await UdtIo.UdtReadExactAsync(clientSocket, chunkHeader, 0, 28, ct) == 0) return false;
+            long totalSize = BitConverter.ToInt64(chunkHeader, 0);
+            long chunkOffset = BitConverter.ToInt64(chunkHeader, 8);
+            long chunkSize = BitConverter.ToInt64(chunkHeader, 16);
+            int nameLen = BitConverter.ToInt32(chunkHeader, 24);
+            if (nameLen <= 0 || nameLen > 4096 || totalSize <= 0 || chunkSize <= 0) return false;
+
+            var nameBuf = new byte[nameLen];
+            if (await UdtIo.UdtReadExactAsync(clientSocket, nameBuf, 0, nameLen, ct) == 0) return false;
+            string fileName = System.Text.Encoding.UTF8.GetString(nameBuf);
+            fileName = Path.GetFileName(fileName);
+
+            var chunkData = new byte[chunkSize];
+            if (await UdtIo.UdtReadExactAsync(clientSocket, chunkData, 0, (int)chunkSize, ct) == 0) return false;
+
+            var receivedHash = new byte[32];
+            if (await UdtIo.UdtReadExactAsync(clientSocket, receivedHash, 0, 32, ct) == 0) return false;
+
+            var tracker = ChunkTracker.GetOrCreate(_chunkTrackers, fileName, totalSize, _saveDirectory);
+            bool isComplete = tracker.WriteChunk(chunkOffset, chunkData, (int)chunkSize);
+            Log("Chunk: " + fileName + " offset=" + chunkOffset + " size=" + chunkSize);
+
+            if (isComplete)
+            {
+                ChunkTracker removed;
+                _chunkTrackers.TryRemove(fileName, out removed);
+                if (tracker != null) tracker.Dispose();
+                Log(L.S_TransferDone(fileName, Utils.FormatSize(totalSize), 0, ""));
+                var completeHandler = OnTransferComplete;
+                if (completeHandler != null) completeHandler();
+                return true;
+            }
+            return false;
+        }
+
         private async Task<bool> ReceiveFilePayload(int clientSocket, string savePath, long fileSize,
             string displayName, CancellationToken ct)
         {
@@ -679,6 +728,7 @@ namespace TrFileTransfer
         private readonly int _port;
         private readonly string _filePath;
         private readonly int _bufferSize;
+        private readonly int _localPort;
         private volatile bool _isRunning;
 
         /// <summary>Fired for every log message.</summary>
@@ -710,6 +760,16 @@ namespace TrFileTransfer
             _bufferSize = bufferSize;
         }
 
+        /// <summary>Creates a UDT client bound to a specific local port for concurrent transfers.</summary>
+        public TransferUdtClient(string serverIp, int port, string filePath, int localPort, int bufferSize = 1048576)
+        {
+            _serverIp = serverIp;
+            _port = port;
+            _filePath = filePath;
+            _bufferSize = bufferSize;
+            _localPort = localPort;
+        }
+
         /// <summary>Sends the file specified in the constructor over UDT.</summary>
         public async Task SendAsync()
         {
@@ -721,6 +781,12 @@ namespace TrFileTransfer
         public async Task SendFolderAsync(string folderPath)
         {
             await RunUdtTransfer(ct => SendFolderInternal(folderPath, ct));
+        }
+
+        /// <summary>Sends a chunk of a file (type 0x02) for concurrent transfer.</summary>
+        public async Task SendChunkedAsync(long offset, long chunkSize, long totalSize)
+        {
+            await RunUdtTransfer(ct => SendChunkedInternal(offset, chunkSize, totalSize, ct));
         }
 
         private async Task RunUdtTransfer(Func<CancellationToken, Task> transferAction)
@@ -774,12 +840,17 @@ namespace TrFileTransfer
             }
         }
 
-        private async Task SendFileInternal(CancellationToken ct)
+        private async Task UdtConnect(CancellationToken ct)
         {
             _socket = UdtNative.udt_socket(UdtNative.AF_INET, UdtNative.SOCK_STREAM, 0);
             if (_socket < 0)
-            {
                 throw new Exception("Failed to create UDT socket");
+
+            if (_localPort > 0)
+            {
+                var localAddr = UdtNative.BuildSockaddr("0.0.0.0", _localPort);
+                if (UdtNative.udt_bind(_socket, ref localAddr, UdtNative.SockAddrSize) == UdtNative.ERROR)
+                    throw new Exception("UDT bind to port " + _localPort + " failed: " + UdtNative.GetErrorDesc());
             }
 
             Log(L.UdtC_Connecting(_serverIp, _port));
@@ -787,15 +858,42 @@ namespace TrFileTransfer
             int connectResult = await Task.Run(
                 () => UdtNative.udt_connect(_socket, ref addr, UdtNative.SockAddrSize), ct);
             if (connectResult == UdtNative.ERROR)
-            {
                 throw new Exception("UDT connect failed: " + UdtNative.GetErrorDesc());
-            }
             Log(L.C_Connected(_serverIp, _port));
             UdtNative.SetTimeout(_socket, 30000, 30000);
-
-            // UDT connect() handshake is asynchronous — wait for socket to leave BOUND state
             await UdtIo.WaitForConnectionReady(_socket, ct);
+        }
 
+        private async Task SendChunkedInternal(long offset, long chunkSize, long totalSize, CancellationToken ct)
+        {
+            await UdtConnect(ct);
+            var fileInfo = new FileInfo(_filePath);
+            string fileName = fileInfo.Name;
+            byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(fileName);
+
+            // Chunk header: type(1) + totalSize(8) + offset(8) + chunkSize(8) + nameLen(4) + name
+            var header = new byte[1 + 8 + 8 + 8 + 4 + nameBytes.Length];
+            int pos = 0;
+            header[pos++] = 0x02; // chunked file
+            Buffer.BlockCopy(BitConverter.GetBytes(totalSize), 0, header, pos, 8); pos += 8;
+            Buffer.BlockCopy(BitConverter.GetBytes(offset), 0, header, pos, 8); pos += 8;
+            Buffer.BlockCopy(BitConverter.GetBytes(chunkSize), 0, header, pos, 8); pos += 8;
+            Buffer.BlockCopy(BitConverter.GetBytes(nameBytes.Length), 0, header, pos, 4); pos += 4;
+            Buffer.BlockCopy(nameBytes, 0, header, pos, nameBytes.Length);
+            await UdtIo.UdtWriteExactAsync(_socket, header, 0, header.Length, ct);
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            await SendFilePayload(_socket, _filePath, chunkSize, fileName, ct, offset);
+            sw.Stop();
+
+            Log(L.C_TransferDone(fileName + " chunk", Utils.FormatSize(chunkSize),
+                sw.Elapsed.TotalSeconds,
+                Utils.FormatSize((long)(chunkSize / Math.Max(sw.Elapsed.TotalSeconds, 0.001)))));
+        }
+
+        private async Task SendFileInternal(CancellationToken ct)
+        {
+            await UdtConnect(ct);
             var fileInfo = new FileInfo(_filePath);
             long fileSize = fileInfo.Length;
             string fileName = fileInfo.Name;
@@ -824,26 +922,7 @@ namespace TrFileTransfer
 
         private async Task SendFolderInternal(string folderPath, CancellationToken ct)
         {
-            _socket = UdtNative.udt_socket(UdtNative.AF_INET, UdtNative.SOCK_STREAM, 0);
-            if (_socket < 0)
-            {
-                throw new Exception("Failed to create UDT socket");
-            }
-
-            Log(L.UdtC_Connecting(_serverIp, _port));
-            var addr = UdtNative.BuildSockaddr(_serverIp, _port);
-            int connectResult = await Task.Run(
-                () => UdtNative.udt_connect(_socket, ref addr, UdtNative.SockAddrSize), ct);
-            if (connectResult == UdtNative.ERROR)
-            {
-                throw new Exception("UDT connect failed: " + UdtNative.GetErrorDesc());
-            }
-            Log(L.C_Connected(_serverIp, _port));
-            UdtNative.SetTimeout(_socket, 30000, 30000);
-
-            // UDT connect() handshake is asynchronous — wait for socket to leave BOUND state
-            await UdtIo.WaitForConnectionReady(_socket, ct);
-
+            await UdtConnect(ct);
             string folderName = Path.GetFileName(folderPath);
             if (string.IsNullOrWhiteSpace(folderName))
                 folderName = "folder";
@@ -922,7 +1001,7 @@ namespace TrFileTransfer
         }
 
         private async Task SendFilePayload(int clientSocket, string filePath, long fileSize,
-            string displayName, CancellationToken ct)
+            string displayName, CancellationToken ct, long fileOffset = 0)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             long bytesSent = 0;
@@ -934,6 +1013,8 @@ namespace TrFileTransfer
             using (var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read,
                 FileShare.Read, 65536, FileOptions.SequentialScan))
             {
+                if (fileOffset > 0)
+                    fileStream.Seek(fileOffset, SeekOrigin.Begin);
                 int read = await fileStream.ReadAsync(bufA, 0, bufA.Length, ct);
                 if (read == 0)
                 {

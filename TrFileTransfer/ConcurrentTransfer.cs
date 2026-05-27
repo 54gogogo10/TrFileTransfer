@@ -15,7 +15,8 @@ namespace TrFileTransfer
         private readonly int _port;
         private readonly string _filePath;
         private readonly int _concurrency;
-        private readonly bool _isUdp;
+        private readonly bool _isUdt;
+        private const int ChunkMinSize = 1048576; // 1 MB minimum chunk size
 
         private long _totalBytes;
         private long _transferredBytes;
@@ -33,7 +34,7 @@ namespace TrFileTransfer
             _port = port;
             _filePath = filePath;
             _concurrency = Math.Max(1, Math.Min(64, concurrency));
-            _isUdp = !isTcp;
+            _isUdt = !isTcp;
         }
 
         public async Task SendAsync()
@@ -50,7 +51,7 @@ namespace TrFileTransfer
             }
 
             int chunks = Math.Min(_concurrency,
-                (int)((totalSize + UdpProtocol.MaxChunkSize - 1) / UdpProtocol.MaxChunkSize));
+                (int)((totalSize + ChunkMinSize - 1) / ChunkMinSize));
             chunks = Math.Max(1, chunks);
             long chunkSize = (totalSize + chunks - 1) / chunks;
             _totalBytes = totalSize;
@@ -158,9 +159,9 @@ namespace TrFileTransfer
         {
             try
             {
-                if (_isUdp)
+                if (_isUdt)
                 {
-                    var client = new TransferUdpClient(_serverIp, _port, _filePath, localPort);
+                    var client = new TransferUdtClient(_serverIp, _port, _filePath, localPort);
                     await client.SendChunkedAsync(offset, size, totalSize);
                 }
                 else
@@ -195,9 +196,9 @@ namespace TrFileTransfer
 
         private async Task SendFileAsync(string filePath, int localPort)
         {
-            if (_isUdp)
+            if (_isUdt)
             {
-                var client = new TransferUdpClient(_serverIp, _port, filePath, localPort);
+                var client = new TransferUdtClient(_serverIp, _port, filePath, localPort);
                 await client.SendAsync();
             }
             else
@@ -210,7 +211,7 @@ namespace TrFileTransfer
         private int FindLocalPort(int index)
         {
             int basePort = _port + index + 1;
-            return Utils.FindFreePort(basePort, _isUdp);
+            return Utils.FindFreePort(basePort, _isUdt);
         }
 
         private void ReportProgress(string displayName)

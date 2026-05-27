@@ -46,6 +46,8 @@ namespace TrFileTransfer
         private Button _btnCancel;
         private CheckBox _chkFolder;
         private CheckBox _chkMonitor;
+        private NumericUpDown _numConcurrency;
+        private Label _lblConcurrency;
 
         // Progress
         private GroupBox _gbProgressS;
@@ -152,6 +154,13 @@ namespace TrFileTransfer
             _chkFolder.CheckedChanged += ChkFolder_CheckedChanged;
             _chkMonitor = new CheckBox { Location = new Point(70, 95), Width = 100, TextAlign = ContentAlignment.MiddleLeft };
             _chkMonitor.CheckedChanged += ChkMonitor_CheckedChanged;
+            _lblConcurrency = new Label { Location = new Point(260, 93), Width = 80, TextAlign = ContentAlignment.MiddleRight };
+            _numConcurrency = new NumericUpDown
+            {
+                Location = new Point(345, 93), Width = 50,
+                Minimum = 1, Maximum = 64, Value = 4
+            };
+            _numConcurrency.ValueChanged += NumConcurrency_ValueChanged;
             _btnCancel = new Button { Location = new Point(455, 56), Width = 110, Height = 30, Enabled = false };
             _btnCancel.Click += BtnCancel_Click;
             _gbClient.Controls.Add(_lblServerIp);
@@ -165,6 +174,8 @@ namespace TrFileTransfer
             _gbClient.Controls.Add(_btnBrowseFile);
             _gbClient.Controls.Add(_chkFolder);
             _gbClient.Controls.Add(_chkMonitor);
+            _gbClient.Controls.Add(_lblConcurrency);
+            _gbClient.Controls.Add(_numConcurrency);
             _gbClient.Controls.Add(_btnSend);
             _gbClient.Controls.Add(_btnCancel);
 
@@ -232,6 +243,7 @@ namespace TrFileTransfer
             _btnCancel.Text = L.CancelBtn;
             _chkFolder.Text = L.FolderMode;
             _chkMonitor.Text = L.MonitorMode;
+            _lblConcurrency.Text = L.ConcurrencyLabel;
 
             _gbProgressS.Text = L.ServerProgress;
             _gbProgressC.Text = L.ClientProgress;
@@ -271,6 +283,7 @@ namespace TrFileTransfer
             _txtFile.Text = Config.Get("LastPath", "");
             _chkFolder.Checked = Config.GetBool("FolderMode", false);
             _chkMonitor.Checked = Config.GetBool("MonitorMode", false);
+            _numConcurrency.Value = Math.Max(1, Math.Min(64, Config.GetInt("Concurrency", 4)));
         }
 
         private void SaveConfig()
@@ -287,6 +300,7 @@ namespace TrFileTransfer
             Config.Set("LastPath", _txtFile.Text.Trim());
             Config.SetBool("FolderMode", _chkFolder.Checked);
             Config.SetBool("MonitorMode", _chkMonitor.Checked);
+            Config.SetInt("Concurrency", (int)_numConcurrency.Value);
             Config.Save();
         }
 
@@ -346,6 +360,12 @@ namespace TrFileTransfer
             _lblFile.Text = isFolder ? L.FolderLabel : L.FileLabel;
             _btnSend.Text = isFolder ? L.SendFolder : L.SendFile;
             _txtFile.Text = "";
+        }
+
+        private void NumConcurrency_ValueChanged(object sender, EventArgs e)
+        {
+            if (_numConcurrency.Value < 1) _numConcurrency.Value = 1;
+            if (_numConcurrency.Value > 64) _numConcurrency.Value = 64;
         }
 
         private void ChkMonitor_CheckedChanged(object sender, EventArgs e)
@@ -530,6 +550,7 @@ namespace TrFileTransfer
             _btnBrowseFile.Enabled = false;
             _chkFolder.Enabled = false;
             _chkMonitor.Enabled = false;
+            _numConcurrency.Enabled = false;
         }
 
         private void OnServerStarted()
@@ -606,7 +627,20 @@ namespace TrFileTransfer
 
             DisableClientInputs();
 
-            if (_rbClientTcp.Checked)
+            int concurrency = (int)_numConcurrency.Value;
+            bool isTcp = _rbClientTcp.Checked;
+
+            if (!isFolder && concurrency > 1)
+            {
+                // Multi-concurrent transfer
+                var concurrent = new ConcurrentTransfer(ip, port, path, concurrency, isTcp);
+                WireConcurrentEvents(concurrent);
+                if (isFolder)
+                    await concurrent.SendFolderAsync();
+                else
+                    await concurrent.SendAsync();
+            }
+            else if (isTcp)
             {
                 _client = new TransferClient(ip, port, path);
                 WireClientEvents(_client);
@@ -645,6 +679,24 @@ namespace TrFileTransfer
                 UpdateCardComplete(card);
             }));
             c.OnStopped += () => this.Invoke((Action)(() => UpdateCardComplete(card)));
+        }
+
+        private void WireConcurrentEvents(ConcurrentTransfer c)
+        {
+            var card = CreateTransferCard(_progressPanelC);
+            c.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
+            c.OnProgress += p => this.Invoke((Action)(() => UpdateCardProgress(card, p)));
+            c.OnError += msg => this.Invoke((Action)(() =>
+            {
+                AddLog(L.ErrorPrefix + msg);
+                ResetClientUI();
+                UpdateCardComplete(card);
+            }));
+            c.OnTransferComplete += () => this.Invoke((Action)(() =>
+            {
+                ResetClientUI();
+                UpdateCardComplete(card);
+            }));
         }
 
         private void WireUdtClientEvents(TransferUdtClient c)
@@ -698,6 +750,7 @@ namespace TrFileTransfer
             _btnBrowseFile.Enabled = true;
             _chkFolder.Enabled = true;
             _chkMonitor.Enabled = true;
+            _numConcurrency.Enabled = true;
         }
 
         private static string FormatEta(TransferProgress p)
