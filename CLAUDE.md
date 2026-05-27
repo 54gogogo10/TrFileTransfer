@@ -10,7 +10,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cd TrFileTransfer && build.bat
 ```
 
-使用已安装 .NET Framework 4.x 自带的 `csc.exe` 生成 `TrFileTransfer.exe`。引用：`System.dll`、`System.Core.dll`、`System.Windows.Forms.dll`、`System.Drawing.dll`。无需 Visual Studio 或 MSBuild，只需 .NET Framework 运行时（包含 `csc.exe`）。
+使用 .NET Framework 4.x 自带的 `csc.exe` 编译。引用：`System.dll`、`System.Core.dll`、`System.Windows.Forms.dll`、`System.Drawing.dll`。`udt.dll` 和 `libmcfgthread-2.dll` 通过 `/resource` 嵌入 exe。
+
+**UDT DLL 编译**（如更新原生代码）：需 MinGW-w64，在 `udt-sdk\udt4\src\` 下执行：
+```
+g++ -DWIN32 -DNDEBUG -DUDT_EXPORTS -O2 -fno-strict-aliasing -Wall \
+    -finline-functions -fvisibility=hidden \
+    -c api.cpp buffer.cpp cache.cpp ccc.cpp channel.cpp common.cpp \
+       core.cpp epoll.cpp list.cpp md5.cpp packet.cpp queue.cpp \
+       window.cpp udt_c_wrapper.cpp
+g++ -shared -o udt.dll *.o -lws2_32 -static-libgcc -static-libstdc++
+```
 
 编译器为 C# 5（内置 `csc.exe` 支持的最高语言版本），生成的 exe 运行在 .NET Framework 4.5+（推荐 4.6.1）。避免 C# 6+ 语法：禁止字符串插值（`$`）、禁止表达式体成员、禁止空条件运算符（`?.`）、禁止异常过滤器（`when`）、禁止数字分隔符。
 
@@ -30,15 +40,16 @@ TrFileTransfer.Tests.exe
 
 ## 架构
 
-八个源文件编译为单个 WinForms exe：
+九个源文件编译为单个 WinForms exe：
 
 - **Program.cs** — 入口。`[STAThread]` Main 启动 `MainForm`。
-- **MainForm.cs** — GUI。服务器和客户端面板同时显示（已移除模式选择单选按钮）。协议选择（TCP/UDT）、服务器绑定地址下拉框（从活动网卡获取）、文件夹模式/监控模式复选框。动态进度卡片：服务器接收进度和客户端发送进度拆分为两个独立的 `FlowLayoutPanel`（左右排列），每个传输一个卡片（进度条+速度），服务端多客户端独立卡片，客户端每次传输独立卡片，完成 3 秒后自动移除。各自面板下方有独立状态标签。所有 UI 由代码构建（无设计器）。右上角语言下拉框。日志上限 500 条，进度事件节流约 100ms。事件绑定抽取到 `WireClientEvents`/`WireUdtClientEvents` 辅助方法。服务器完成传输后 UI 保持"监听中..."状态（不重新启用所有输入控件）——服务器仍在运行并接受新传输。`ResetClientUI` 重置客户端控件和状态文本为"就绪"。**监控模式**：`_chkMonitor` 复选框启用文件夹监控——启动时先扫描目录中已有文件并入队，然后 `FileSystemWatcher` 检测新文件，等待文件稳定（连续 2 次 500ms 轮询文件大小不变），通过 TCP 或 UDT 发送，成功后移入"已发送文件"子目录。2 分钟内未稳定的文件移到队列末尾。每个文件独立进度卡片。详见下方"监控模式"章节。
-- **TransferServer.cs** — 异步 TCP 服务器。绑定到可配置地址+端口，并发接受多个连接（fire-and-forget）。`HandleClient` 读取 1 字节类型前缀，分发到 `HandleFileTransfer`（单文件）或 `HandleFolderTransfer`（文件夹，带每个文件的相对路径和 SHA256）。使用 `Task.Factory.StartNew(LongRunning)` 执行接受循环。设置 `NoDelay = true` 和 256KB 缓冲区。新增 `OnClientConnected`/`OnClientProgress`/`OnClientTransferComplete` 事件（按客户端 IPEndPoint 区分），支持并发多客户端独立进度跟踪。
-- **TransferClient.cs** — 异步 TCP 客户端。`SendAsync()` 发送单文件，`SendFolderAsync()` 发送文件夹。两者委托到共享的 `RunTransfer` 包装器进行生命周期管理。发送文件元数据 + 数据 + 每个文件的 SHA256 哈希。设置 `NoDelay = true` 和 256KB 缓冲区。`SendFilePayload` 辅助方法由单文件和文件夹传输共享。`SendFileInternal` 和 `SendFolderInternal` 均在成功时触发 `OnTransferComplete`。
-- **TransferUdt.cs** — UDT STREAM 传输。`UdtNative` 提供 P/Invoke 声明（udt_socket/udt_bind/udt_listen/udt_accept/udt_connect/udt_send/udt_recv/udt_close 等），`UdtDll` 在首次使用时从嵌入资源提取 udt.dll 到 exe 目录。`TransferUdtServer` 复用 TCP 线协议（1 字节类型前缀 + 元数据 + 数据 + SHA256），`HandleClient` 添加/移除 client-specific progress handler，支持 `OnClientProgress`/`OnClientTransferComplete` 事件（按 IPEndPoint 区分）。`TransferUdtClient` 同样复用 TCP 线协议，`SendAsync()`/`SendFolderAsync()` 委托到 `RunUdtTransfer`。UDT STREAM 模式提供可靠有序字节流，无需应用层 ARQ/ACK/NAK。设置 30 秒收发超时。所有 I/O 通过 `UdtIo` 辅助方法（`UdtReadExactAsync`/`UdtWriteExactAsync`）封装 `udt_recv`/`udt_send` 的 `Task.Run` 包装。
-- **Config.cs** — 键值配置持久化。保存/加载到 `%AppData%\TrFileTransfer\config.ini`。`Get`/`GetInt`/`GetBool`/`Set`/`SetInt`/`SetBool` 辅助方法。启动时加载，关闭时保存。
-- **Shared.cs** — `TransferProgress` 类、`Utils` 静态辅助方法（`FormatSize`、`ConstantTimeEquals`、`LogTo`、`SanitizeRelativePath`、`GetUniqueSavePath`）。四个传输文件通用，避免重复。
+- **MainForm.cs** — GUI。服务器和客户端面板同时显示（已移除模式选择单选按钮）。协议选择（TCP/UDT）、服务器绑定地址下拉框（从活动网卡获取）。**并发控制**：`_numConcurrency` NumericUpDown（1-64），控制客户端多连接并行传输数量。文件夹模式/监控模式复选框。动态进度卡片：服务器接收进度和客户端发送进度拆分为两个独立的 `FlowLayoutPanel`（左右排列），每个传输一个卡片（进度条+速度），服务端多客户端独立卡片（TCP 用 `_tcpCards`、UDT 用 `_udtCards` 字典），客户端每次传输独立卡片，完成 3 秒后自动移除。各自面板下方有独立状态标签。所有 UI 由代码构建（无设计器）。右上角语言下拉框。日志上限 500 条，进度事件节流约 100ms。事件绑定抽取到 `WireClientEvents`/`WireUdtClientEvents`/`WireConcurrentEvents` 辅助方法。服务器完成传输后 UI 保持"监听中..."状态——服务器仍在运行并接受新传输。`ResetClientUI` 重置客户端控件。"关于"按钮和日志导出按钮。
+- **TransferServer.cs** — 异步 TCP 服务器。绑定到可配置地址+端口，并发接受多个连接（fire-and-forget）。`HandleClient` 读取 1 字节类型前缀，分发到 `HandleFileTransfer`（单文件 0x00）、`HandleFolderTransfer`（文件夹 0x01）或 `HandleChunkedFile`（分块文件 0x02）。`ChunkTracker` 聚合分块传输。`OnClientConnected`/`OnClientProgress`/`OnClientTransferComplete` 事件按 IPEndPoint 区分。`NoDelay = true`，LongRunning 接受循环。
+- **TransferClient.cs** — 异步 TCP 客户端。`SendAsync()`、`SendFolderAsync()`、`SendChunkedAsync(offset, chunkSize, totalSize)` 发送分块文件（类型 0x02）。`SendFilePayload` 支持 `fileOffset` 参数。支持绑定源端口。
+- **TransferUdt.cs** — UDT STREAM 传输（替换旧 UDP 自定义协议）。`UdtNative` 提供引用计数 `UdtStartup()`/`UdtCleanup()` 和 Cdecl P/Invoke（14 个 API）。`UdtDll` 提取嵌入的 `udt.dll` + `libmcfgthread-2.dll`，支持只读目录回退和杀软锁重试。`TransferUdtServer`/`TransferUdtClient` 复用 TCP 线协议。客户端 `WaitForConnectionReady()` 轮询等待异步 connect 握手完成。`UdtIo` 辅助方法封装异步 I/O。
+- **ConcurrentTransfer.cs** — 多连接并发传输编排器。单文件切分为 N 个等大分块并行发送（独立连接+端口）。文件夹用 `SemaphoreSlim` 控制并发度。
+- **Config.cs** — 键值配置持久化。`Get`/`GetInt`/`GetBool`/`Set`/`SetInt`/`SetBool`。启动时加载，关闭时保存。
+- **Shared.cs** — `TransferProgress`/`FileEntry` 结构体。`ChunkTracker` 类（分块重组）。`Utils` 静态辅助方法（`FormatSize`、`ConstantTimeEquals`、`LogTo`、`SanitizeRelativePath`、`GetUniqueSavePath`、`FindFreePort`、`EmptyBytes`）。
 - **L10N.cs** — 本地化字符串。静态 `L` 类根据 `L.IsChinese` 返回英文或中文文本。命名规则见下方"本地化约定"。
 - **Tests/TestProgram.cs** — 测试入口。`TestProgram.Main` 先运行单元测试再运行集成测试，退出码反映结果。同时包含 `UnitTests` 类、`Assert` 辅助类（`Equal/True/False/NotNull/Throws`）、`TestRunner.Run(name, action)` 追踪通过/失败计数。
 - **Tests/IntegrationTests.cs** — TCP/UDT 端到端集成测试。`FindFreePort()` 动态获取可用端口。
@@ -96,29 +107,61 @@ TCP 和 UDT 服务器都使用 `Utils.GetUniqueSavePath`，在基础文件名（
 
 ## UDT 传输
 
-UDT 传输基于 libudt4 修复版，使用 STREAM 模式。UDT 在 UDP 之上提供可靠、有序的字节流（类 TCP 语义），由库内部处理拥塞控制、丢包恢复和重排序。应用层无需实现 ARQ、ACK/NAK、滑动窗口或 RTT 测量。
+UDT 传输基于 UDT4/libudt v4.11，使用 STREAM 模式。UDT 在 UDP 之上提供可靠、有序的字节流（类 TCP 语义），由库内部处理拥塞控制、丢包恢复和重排序。应用层无需实现 ARQ、ACK/NAK、滑动窗口或 RTT 测量。
 
 **应用层协议复用了相同的 TCP 线协议**（见上方"TCP 线协议"章节）。TransferUdtServer 和 TransferUdtClient 发送/接收与 TCP 对等类相同格式的数据，仅传输层不同。
 
-### DLL 部署
+### DLL 编译
 
-`udt.dll` 通过 csc.exe 的 `/resource` 选项嵌入到 exe 中。首次运行时，`UdtDll.EnsureExtracted()` 检测 exe 目录下是否存在 `udt.dll`，若不存在则从嵌入资源提取。随后的运行直接使用已提取的 DLL。
+UDT4 源码不默认导出 `udt_` 前缀的 C 函数——所有 API（`startup`、`socket`、`bind` 等）位于 `UDT::` 命名空间内，以 C++ 名称修饰编译。`udt_c_wrapper.cpp` 用 `extern "C"` + `__declspec(dllexport)` 包装所有 14 个 API，导出纯 C 名称供 P/Invoke 调用。
+
+```
+# 编译 udt.dll（需要 MinGW-w64）：
+cd udt-sdk\udt4\src
+g++ -DWIN32 -DNDEBUG -DUDT_EXPORTS -O2 -fno-strict-aliasing -Wall \
+    -finline-functions -fvisibility=hidden \
+    -c api.cpp buffer.cpp cache.cpp ccc.cpp channel.cpp common.cpp \
+       core.cpp epoll.cpp list.cpp md5.cpp packet.cpp queue.cpp \
+       window.cpp udt_c_wrapper.cpp
+g++ -shared -o udt.dll *.o -lws2_32 -static-libgcc -static-libstdc++
+
+# 复制产物：
+copy udt.dll libmcfgthread-2.dll TrFileTransfer\
+```
+
+`udt.dll` 依赖 `libmcfgthread-2.dll`（MinGW MCF 线程运行时，约 42 KB）。两个 DLL 均通过 csc.exe `/resource` 嵌入 exe，首次运行时由 `UdtDll.EnsureExtracted()` 提取到 exe 目录。提取逻辑支持只读目录回退到 `%TEMP%` + `SetDllDirectory`，以及杀软锁重试（最多 3 次，间隔 200ms）。
 
 ### P/Invoke
 
 `UdtNative` 静态类声明了核心 UDT API（CallingConvention.Cdecl）：
-- 生命周期：`udt_startup()` / `udt_cleanup()`
+
+- 生命周期：`UdtStartup()` / `UdtCleanup()` —— **引用计数包装**，private `udt_startup()`/`udt_cleanup()` 仅在引用计数归零时调用原生函数。防止客户端传输完成时 `udt_cleanup()` 关闭活跃的服务器连接。
 - 套接字：`udt_socket()` / `udt_close()`
 - 连接：`udt_bind()` / `udt_listen()` / `udt_accept()` / `udt_connect()`
-- I/O：`udt_send()` / `udt_recv()`（通过 `Task.Run` 包装实现异步）
-- 选项：`udt_setsockopt()` / `udt_getsockopt()`（用于设置 `UDT_RCVTIMEO` / `UDT_SNDTIMEO` 为 30 秒）
-- 错误：`udt_getlasterror()` / `udt_getlasterror_desc()`
+- I/O：`udt_send()` / `udt_recv()`（通过 `Task.Run` 包装实现异步，均有 `.ConfigureAwait(false)`）
+- 选项：`udt_setsockopt()` / `udt_getsockopt()`（`UDT_RCVTIMEO` / `UDT_SNDTIMEO` 设为 30 秒）
+- 错误：`udt_getlasterror_desc()` 返回错误描述字符串（`GetErrorDesc()` 包装）
+- `SockAddrSize` 缓存 `Marshal.SizeOf(typeof(sockaddr_in))`，避免每次 accept/connect 反射调用
 
 ### 服务器架构
 
-`TransferUdtServer.Start()`：确保 DLL 已提取 → `udt_startup()` → `udt_socket(AF_INET, SOCK_STREAM, 0)` → `udt_bind()` → `udt_listen(10)` → LongRunning accept 循环。
+`TransferUdtServer.Start()`：`UdtDll.EnsureExtracted()` → `UdtStartup()`（检查返回值，失败则报告 "UDT library init failed"）→ `udt_socket()` → `udt_bind()` → `udt_listen(10)` → LongRunning accept 循环。
 
-Accept 循环对每个客户端连接执行 fire-and-forget `HandleClient`，该函数添加/移除 client-specific progress handler（模式与 TCP TransferServer 相同），支持 `OnClientProgress`/`OnClientTransferComplete`（按 IPEndPoint 区分）。Stop() 调用 `udt_close()` 中断 accept 循环，然后 `udt_cleanup()`。
+Accept 循环：`udt_accept()` 返回客户端 socket → 添加到 `_clientSockets` 列表 → fire-and-forget `HandleClient` → 添加/移除 client-specific progress handler（模式与 TCP TransferServer 相同），支持 `OnClientProgress`/`OnClientTransferComplete`（按 IPEndPoint 区分）。
+
+`HandleClient` 仅在传输真正成功完成（`HandleFileTransfer`/`HandleFolderTransfer` 返回 true）时触发 `OnClientTransferComplete`。协议错误（无效头部、零文件计数、哈希失败）返回 false，不触发完成事件。
+
+`Stop()` 关闭监听 socket → 遍历 `_clientSockets` 关闭所有活跃客户端 socket（使 `HandleClient` 中的阻塞 I/O 立即中断）→ `Uninit()`（仅在 `_startupOk` 为 true 时调用 `UdtCleanup()`，防止 `Start()` 中途失败后的双重清理）。
+
+`AcceptLoop` 中 IPEndPoint 构造使用 `(uint)`/`(ushort)` 强制转换避免 `sin_addr`/`sin_port` 的符号扩展——客户端临时端口（≥49152）在从网络字节序转换时不会变为负数。
+
+### 客户端架构
+
+`TransferUdtClient`：`RunUdtTransfer`（生命周期管理 + `.ConfigureAwait(false)`）→ `SendFileInternal`/`SendFolderInternal`。
+
+连接流程：`udt_socket()` → `udt_connect()` → `SetTimeout(30s)` → **`WaitForConnectionReady()`**（UDT connect 握手为异步，轮询空 `udt_send()` 直到 socket 从 BOUND 进入 CONNECTED 状态，最多 30 次 × 200ms）→ 发送 TCP 线协议头部 + 数据 + SHA256。
+
+`_socket` 声明为 `volatile`，防止 `Cancel()` 与 `finally` 块之间的重入竞态。连接/socket 失败抛出异常（触发 `OnError` + UI 重置），而非静默返回。
 
 ## 边界情况与异常处理
 
@@ -134,7 +177,11 @@ Accept 循环对每个客户端连接执行 fire-and-forget `HandleClient`，该
 
 ### UDT 超时与错误处理
 
-UDT STREAM 模式通过 `udt_setsockopt` 设置 `UDT_RCVTIMEO` 和 `UDT_SNDTIMEO` 为 30 秒。超时后 `udt_recv`/`udt_send` 返回 -1 (ERROR)，调用方可检查 `udt_getlasterror()` 获取详细错误码。`udt_close()` 用于中断阻塞中的 I/O 操作（类似 TCP 的 socket close）。常见的 UDT 错误码：`ERR_CONNLOST`(7)、`ERR_NOSERVER`(2)、`ERR_CONNREJ`(3)。
+UDT STREAM 模式通过 `udt_setsockopt` 设置 `UDT_RCVTIMEO` 和 `UDT_SNDTIMEO` 为 30 秒。超时后 `udt_recv`/`udt_send` 返回 -1 (ERROR)，调用方通过 `UdtNative.GetErrorDesc()` 获取错误描述。`udt_close()` 用于中断阻塞中的 I/O 操作（类似 TCP 的 socket close）。
+
+`UdtWriteExactAsync` 处理 `udt_send` 部分发送（阻塞模式下极少发生），通过循环 + 临时缓冲区补齐剩余字节。`UdtReadExactAsync` 在短读取或 EOF 时抛出 `IOException`，调用方不需要检查返回值（也不检查——返回值始终等于 count）。
+
+`sockaddr_in` 为 blittable 结构体（`LayoutKind.Sequential, Size=16`），通过引用传递给原生代码。`BuildSockaddr` 手动构造网络字节序的 `sin_addr`/`sin_port`。
 
 ## 监控模式
 
