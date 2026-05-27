@@ -446,6 +446,8 @@ namespace TrFileTransfer
                 }));
                 tcpServer.OnTransferComplete += () => this.Invoke((Action)(() =>
                 {
+                    foreach (var c in _tcpCards.Values) UpdateCardComplete(c);
+                    _tcpCards.Clear();
                     _lblStatusS.Text = L.Listening;
                 }));
                 tcpServer.OnStarted += () => this.Invoke((Action)(() =>
@@ -485,6 +487,8 @@ namespace TrFileTransfer
                 }));
                 udtServer.OnTransferComplete += () => this.Invoke((Action)(() =>
                 {
+                    foreach (var c in _udtCards.Values) UpdateCardComplete(c);
+                    _udtCards.Clear();
                     _lblStatusS.Text = L.Listening;
                 }));
                 udtServer.OnStarted += () => this.Invoke((Action)(() =>
