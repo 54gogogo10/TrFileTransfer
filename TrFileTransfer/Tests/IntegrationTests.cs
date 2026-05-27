@@ -27,8 +27,10 @@ namespace TrFileTransfer.Tests
             runner.Run("Integration_TCP_SingleFile", TcpSingleFile);
             runner.Run("Integration_TCP_Folder", TcpFolder);
             runner.Run("Integration_TCP_Concurrent10", TcpConcurrent10);
+            runner.Run("Integration_TCP_Concurrent64", TcpConcurrent64);
             runner.Run("Integration_UDT_SingleFile", UdtSingleFile);
             runner.Run("Integration_UDT_Concurrent10", UdtConcurrent10);
+            runner.Run("Integration_UDT_Concurrent64", UdtConcurrent64);
         }
 
         private static void TcpSingleFile()
@@ -233,20 +235,21 @@ namespace TrFileTransfer.Tests
             }
         }
 
-        private static void TcpConcurrent10()
+        // Shared helper: run a concurrent transfer test for TCP or UDT
+        private static void ConcurrentTransferTest(string prefix, bool isTcp, int concurrency,
+            int fileSizeMB, int timeoutSec)
         {
             int port = FindFreePort();
-            string sendDir = Path.Combine(Path.GetTempPath(), "tr_it_tcpc_s_" + Guid.NewGuid().ToString("N"));
-            string recvDir = Path.Combine(Path.GetTempPath(), "tr_it_tcpc_r_" + Guid.NewGuid().ToString("N"));
+            string sendDir = Path.Combine(Path.GetTempPath(), prefix + "_s_" + Guid.NewGuid().ToString("N"));
+            string recvDir = Path.Combine(Path.GetTempPath(), prefix + "_r_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(sendDir);
             Directory.CreateDirectory(recvDir);
 
-            TransferServer server = null;
             try
             {
-                var testFile = Path.Combine(sendDir, "tcp_concurrent_test.bin");
+                var testFile = Path.Combine(sendDir, "c_test.bin");
                 var rng = new Random(42);
-                var content = new byte[10 * 1024 * 1024]; // 10 MB
+                var content = new byte[fileSizeMB * 1024 * 1024];
                 rng.NextBytes(content);
                 File.WriteAllBytes(testFile, content);
 
@@ -255,115 +258,64 @@ namespace TrFileTransfer.Tests
                 bool serverOk = false;
                 string serverError = null;
 
-                server = new TransferServer("127.0.0.1", port, recvDir);
-                server.OnStarted += () => serverStarted.Set();
-                server.OnTransferComplete += () => { serverOk = true; serverDone.Set(); };
-                server.OnError += msg => { serverError = msg; serverDone.Set(); };
-                server.Start();
+                if (isTcp)
+                {
+                    var tcpServer = new TransferServer("127.0.0.1", port, recvDir);
+                    tcpServer.OnStarted += () => serverStarted.Set();
+                    tcpServer.OnTransferComplete += () => { serverOk = true; serverDone.Set(); };
+                    tcpServer.OnError += msg => { serverError = msg; serverDone.Set(); };
+                    tcpServer.Start();
+                }
+                else
+                {
+                    var udtServer = new TransferUdtServer("127.0.0.1", port, recvDir);
+                    udtServer.OnStarted += () => serverStarted.Set();
+                    udtServer.OnTransferComplete += () => { serverOk = true; serverDone.Set(); };
+                    udtServer.OnError += msg => { serverError = msg; serverDone.Set(); };
+                    udtServer.Start();
+                }
 
                 if (!serverStarted.WaitOne(5000))
-                    throw new Exception("TCP server did not start within 5s");
+                    throw new Exception("Server did not start within 5s");
 
                 var clientDone = new ManualResetEvent(false);
                 bool clientOk = false;
-                var concurrent = new ConcurrentTransfer("127.0.0.1", port, testFile, 10, true);
+                var concurrent = new ConcurrentTransfer("127.0.0.1", port, testFile, concurrency, isTcp);
                 concurrent.OnTransferComplete += () => { clientOk = true; clientDone.Set(); };
                 concurrent.OnError += msg => { clientDone.Set(); };
 
                 var sendTask = concurrent.SendAsync();
 
-                if (!serverDone.WaitOne(60000))
-                    throw new Exception("TCP server did not complete within 60s");
+                if (!serverDone.WaitOne(timeoutSec * 1000))
+                    throw new Exception("Server did not complete within " + timeoutSec + "s");
                 if (!serverOk)
-                    throw new Exception("TCP server error: " + (serverError ?? "unknown"));
+                    throw new Exception("Server error: " + (serverError ?? "unknown"));
 
-                sendTask.Wait(60000);
+                sendTask.Wait(timeoutSec * 1000);
                 if (!clientDone.WaitOne(5000))
-                    throw new Exception("Concurrent client did not fire completion event");
+                    throw new Exception("Client did not fire completion event");
                 if (!clientOk)
                     throw new Exception("Concurrent transfer failed");
 
                 Thread.Sleep(300);
 
-                var receivedFile = Path.Combine(recvDir, "tcp_concurrent_test.bin");
-                Assert.True(File.Exists(receivedFile), "received concurrent file exists");
+                var receivedFile = Path.Combine(recvDir, "c_test.bin");
+                Assert.True(File.Exists(receivedFile), "received file exists");
                 var receivedContent = File.ReadAllBytes(receivedFile);
-                Assert.Equal(content.Length, receivedContent.Length, "concurrent file size matches");
-                Assert.True(Utils.ConstantTimeEquals(content, receivedContent), "concurrent content SHA256 match");
+                Assert.Equal(content.Length, receivedContent.Length, "file size matches");
+                Assert.True(Utils.ConstantTimeEquals(content, receivedContent), "content SHA256 match");
             }
             finally
             {
-                try { if (server != null) server.Stop(); } catch { }
                 try { Directory.Delete(sendDir, true); } catch { }
                 try { Directory.Delete(recvDir, true); } catch { }
             }
         }
 
-        private static void UdtConcurrent10()
-        {
-            int port = FindFreePort();
-            string sendDir = Path.Combine(Path.GetTempPath(), "tr_it_udtc_s_" + Guid.NewGuid().ToString("N"));
-            string recvDir = Path.Combine(Path.GetTempPath(), "tr_it_udtc_r_" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(sendDir);
-            Directory.CreateDirectory(recvDir);
+        private static void TcpConcurrent10()  { ConcurrentTransferTest("tr_tcpc10", true, 10, 10, 60); }
+        private static void TcpConcurrent64()  { ConcurrentTransferTest("tr_tcpc64", true, 64, 64, 120); }
 
-            TransferUdtServer server = null;
-            try
-            {
-                // 10 MB file with 10 concurrent chunks (1 MB each)
-                var testFile = Path.Combine(sendDir, "udt_concurrent_test.bin");
-                var rng = new Random(42);
-                var content = new byte[10 * 1024 * 1024];
-                rng.NextBytes(content);
-                File.WriteAllBytes(testFile, content);
-
-                var serverStarted = new ManualResetEvent(false);
-                var serverDone = new ManualResetEvent(false);
-                bool serverOk = false;
-                string serverError = null;
-
-                server = new TransferUdtServer("127.0.0.1", port, recvDir);
-                server.OnStarted += () => serverStarted.Set();
-                server.OnTransferComplete += () => { serverOk = true; serverDone.Set(); };
-                server.OnError += msg => { serverError = msg; serverDone.Set(); };
-                server.Start();
-
-                if (!serverStarted.WaitOne(5000))
-                    throw new Exception("UDT server did not start within 5s");
-
-                var clientDone = new ManualResetEvent(false);
-                bool clientOk = false;
-                var concurrent = new ConcurrentTransfer("127.0.0.1", port, testFile, 10, false);
-                concurrent.OnTransferComplete += () => { clientOk = true; clientDone.Set(); };
-                concurrent.OnError += msg => { clientDone.Set(); };
-
-                var sendTask = concurrent.SendAsync();
-
-                if (!serverDone.WaitOne(120000))
-                    throw new Exception("UDT server did not complete within 120s");
-                if (!serverOk)
-                    throw new Exception("UDT server error: " + (serverError ?? "unknown"));
-
-                sendTask.Wait(120000);
-                if (!clientDone.WaitOne(5000))
-                    throw new Exception("Concurrent client did not fire completion event");
-                if (!clientOk)
-                    throw new Exception("Concurrent transfer failed");
-
-                Thread.Sleep(500);
-
-                var receivedFile = Path.Combine(recvDir, "udt_concurrent_test.bin");
-                Assert.True(File.Exists(receivedFile), "received concurrent file exists");
-                var receivedContent = File.ReadAllBytes(receivedFile);
-                Assert.Equal(content.Length, receivedContent.Length, "concurrent file size matches");
-                Assert.True(Utils.ConstantTimeEquals(content, receivedContent), "concurrent content SHA256 match");
-            }
-            finally
-            {
-                try { if (server != null) server.Stop(); } catch { }
-                try { Directory.Delete(sendDir, true); } catch { }
-                try { Directory.Delete(recvDir, true); } catch { }
-            }
-        }
+        private static void UdtConcurrent10()  { ConcurrentTransferTest("tr_udtc10", false, 10, 10, 120); }
+        private static void UdtConcurrent64()  { ConcurrentTransferTest("tr_udtc64", false, 64, 64, 240); }
     }
 }
