@@ -594,6 +594,21 @@ namespace TrFileTransfer
             bool isComplete = tracker.WriteChunk(chunkOffset, chunkData, (int)chunkSize);
             Log("Chunk: " + fileName + " offset=" + chunkOffset + " size=" + chunkSize);
 
+            // Report aggregate progress across all chunks
+            var progressHandler = OnProgress;
+            if (progressHandler != null)
+            {
+                long saved = tracker.BytesReceived;
+                progressHandler(new TransferProgress
+                {
+                    BytesTransferred = saved,
+                    TotalBytes = totalSize,
+                    SpeedBytesPerSecond = 0,
+                    Elapsed = TimeSpan.Zero,
+                    FileName = fileName
+                });
+            }
+
             if (isComplete)
             {
                 ChunkTracker removed;
