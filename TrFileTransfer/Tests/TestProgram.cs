@@ -87,8 +87,6 @@ namespace TrFileTransfer.Tests
             RunSanitizeRelativePath(runner);
             RunConstantTimeEquals(runner);
             RunGetUniqueSavePath(runner);
-            RunBuildPacket(runner);
-            RunParseHeader(runner);
             RunConfig(runner);
             RunL10N(runner);
         }
@@ -190,119 +188,6 @@ namespace TrFileTransfer.Tests
             {
                 try { Directory.Delete(dir, true); } catch { }
             }
-        }
-
-        private static void RunBuildPacket(TestRunner runner)
-        {
-            runner.Run("BuildPacket_WithBody", () =>
-            {
-                var body = new byte[] { 10, 20, 30, 40, 50 };
-                var packet = UdpProtocol.BuildPacket(UdpProtocol.TypeData, 42, body);
-                Assert.Equal(UdpProtocol.HeaderSize + 5, packet.Length, "length");
-                Assert.True(packet[0] == 0x54 && packet[1] == 0x50 &&
-                    packet[2] == 0x44 && packet[3] == 0x55, "magic");
-                Assert.Equal(UdpProtocol.TypeData, (int)packet[4], "type");
-                Assert.Equal(0, (int)packet[5], "reserved");
-                Assert.Equal(42, BitConverter.ToInt32(packet, 6), "seq");
-                Assert.Equal(5, BitConverter.ToInt32(packet, 10), "bodyLen");
-                Assert.Equal(10, (int)packet[14], "body[0]");
-                Assert.Equal(50, (int)packet[18], "body[4]");
-            });
-
-            runner.Run("BuildPacket_EmptyBody", () =>
-            {
-                var packet = UdpProtocol.BuildPacket(UdpProtocol.TypeAck, 0, new byte[0]);
-                Assert.Equal(UdpProtocol.HeaderSize, packet.Length, "ACK length");
-                Assert.Equal(UdpProtocol.TypeAck, (int)packet[4], "ACK type");
-                Assert.Equal(0, BitConverter.ToInt32(packet, 6), "seq");
-                Assert.Equal(0, BitConverter.ToInt32(packet, 10), "bodyLen");
-            });
-
-            runner.Run("BuildPacket_NullBody", () =>
-            {
-                var packet = UdpProtocol.BuildPacket(UdpProtocol.TypeFinAck, 7, null);
-                Assert.Equal(UdpProtocol.HeaderSize, packet.Length, "FIN_ACK length");
-                Assert.Equal(UdpProtocol.TypeFinAck, (int)packet[4], "FIN_ACK type");
-                Assert.Equal(7, BitConverter.ToInt32(packet, 6), "seq");
-                Assert.Equal(0, BitConverter.ToInt32(packet, 10), "bodyLen");
-            });
-
-            runner.Run("BuildPacketFromBuffer_NullSource", () =>
-            {
-                var packet = UdpProtocol.BuildPacketFromBuffer(UdpProtocol.TypeAck, 0, null, 0, 0);
-                Assert.Equal(UdpProtocol.HeaderSize, packet.Length, "ACK length");
-                Assert.Equal(UdpProtocol.TypeAck, (int)packet[4], "ACK type");
-            });
-
-            runner.Run("BuildPacketFromBuffer_NullSourcePositiveLen", () =>
-            {
-                // This must NOT crash — the guard handles null source
-                var packet = UdpProtocol.BuildPacketFromBuffer(UdpProtocol.TypeData, 5, null, 0, 4);
-                Assert.Equal(UdpProtocol.HeaderSize + 4, packet.Length, "length");
-                for (int i = 0; i < 4; i++)
-                    Assert.Equal(0, (int)packet[UdpProtocol.HeaderSize + i],
-                        string.Format("body[{0}] zeroed", i));
-            });
-
-            runner.Run("BuildPacketFromBuffer_WithOffset", () =>
-            {
-                var source = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 };
-                var packet = UdpProtocol.BuildPacketFromBuffer(UdpProtocol.TypeData, 1, source, 2, 3);
-                Assert.Equal(UdpProtocol.HeaderSize + 3, packet.Length, "length");
-                Assert.Equal(3, (int)packet[UdpProtocol.HeaderSize], "copied from offset 2");
-                Assert.Equal(4, (int)packet[UdpProtocol.HeaderSize + 1], "copied from offset 3");
-                Assert.Equal(5, (int)packet[UdpProtocol.HeaderSize + 2], "copied from offset 4");
-            });
-        }
-
-        private static void RunParseHeader(TestRunner runner)
-        {
-            runner.Run("ParseHeader_Null", () =>
-            {
-                byte type; int seq, bodyLen;
-                Assert.False(UdpProtocol.ParseHeader(null, out type, out seq, out bodyLen), "null");
-            });
-
-            runner.Run("ParseHeader_TooShort", () =>
-            {
-                byte type; int seq, bodyLen;
-                Assert.False(UdpProtocol.ParseHeader(new byte[10], out type, out seq, out bodyLen), "short");
-            });
-
-            runner.Run("ParseHeader_BadMagic", () =>
-            {
-                byte type; int seq, bodyLen;
-                var packet = new byte[UdpProtocol.HeaderSize];
-                Assert.False(UdpProtocol.ParseHeader(packet, out type, out seq, out bodyLen), "bad magic");
-            });
-
-            runner.Run("ParseHeader_Valid", () =>
-            {
-                var packet = UdpProtocol.BuildPacket(UdpProtocol.TypeFin, 100, new byte[] { 1, 2, 3 });
-                byte type; int seq, bodyLen;
-                Assert.True(UdpProtocol.ParseHeader(packet, out type, out seq, out bodyLen), "valid");
-                Assert.Equal(UdpProtocol.TypeFin, (int)type, "type");
-                Assert.Equal(100, seq, "seq");
-                Assert.Equal(3, bodyLen, "bodyLen");
-            });
-
-            runner.Run("ParseHeader_NegativeBodyLen", () =>
-            {
-                var packet = new byte[UdpProtocol.HeaderSize];
-                Buffer.BlockCopy(BitConverter.GetBytes(UdpProtocol.Magic), 0, packet, 0, 4);
-                Buffer.BlockCopy(BitConverter.GetBytes(-1), 0, packet, 10, 4);
-                byte type; int seq, bodyLen;
-                Assert.False(UdpProtocol.ParseHeader(packet, out type, out seq, out bodyLen), "negative bodyLen");
-            });
-
-            runner.Run("ParseHeader_BodyLenTooLarge", () =>
-            {
-                var packet = new byte[UdpProtocol.HeaderSize + 5];
-                Buffer.BlockCopy(BitConverter.GetBytes(UdpProtocol.Magic), 0, packet, 0, 4);
-                Buffer.BlockCopy(BitConverter.GetBytes(100), 0, packet, 10, 4);
-                byte type; int seq, bodyLen;
-                Assert.False(UdpProtocol.ParseHeader(packet, out type, out seq, out bodyLen), "bodyLen too large");
-            });
         }
 
         private static void RunConfig(TestRunner runner)

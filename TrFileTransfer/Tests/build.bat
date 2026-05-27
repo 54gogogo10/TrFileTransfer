@@ -25,13 +25,9 @@ echo.
     ..\Config.cs ^
     ..\Shared.cs ^
     ..\L10N.cs ^
-    ..\UdpProtocol.cs ^
     ..\TransferServer.cs ^
-    ..\TransferUdpSession.cs ^
-    ..\TransferUdpServer.cs ^
+    ..\TransferUdt.cs ^
     ..\TransferClient.cs ^
-    ..\TransferUdpClient.cs ^
-    ..\ConcurrentTransfer.cs ^
     TestProgram.cs ^
     IntegrationTests.cs
 

@@ -26,8 +26,7 @@ namespace TrFileTransfer.Tests
         {
             runner.Run("Integration_TCP_SingleFile", TcpSingleFile);
             runner.Run("Integration_TCP_Folder", TcpFolder);
-            runner.Run("Integration_UDP_SingleFile", UdpSingleFile);
-            runner.Run("Integration_TCP_ChunkedConcurrent", TcpChunkedConcurrent);
+            runner.Run("Integration_UDT_SingleFile", UdtSingleFile);
         }
 
         private static void TcpSingleFile()
@@ -166,19 +165,18 @@ namespace TrFileTransfer.Tests
             }
         }
 
-        private static void UdpSingleFile()
+        private static void UdtSingleFile()
         {
-            // UDP uses a separate port from TCP, but find a free port similarly
             int port = FindFreePort();
-            string sendDir = Path.Combine(Path.GetTempPath(), "tr_it_udps_" + Guid.NewGuid().ToString("N"));
-            string recvDir = Path.Combine(Path.GetTempPath(), "tr_it_udpr_" + Guid.NewGuid().ToString("N"));
+            string sendDir = Path.Combine(Path.GetTempPath(), "tr_it_udt_s_" + Guid.NewGuid().ToString("N"));
+            string recvDir = Path.Combine(Path.GetTempPath(), "tr_it_udt_r_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(sendDir);
             Directory.CreateDirectory(recvDir);
 
-            TransferUdpServer server = null;
+            TransferUdtServer server = null;
             try
             {
-                var testFile = Path.Combine(sendDir, "udp_test.bin");
+                var testFile = Path.Combine(sendDir, "udt_test.bin");
                 var rng = new Random(99);
                 var content = new byte[1024 * 50]; // 50 KB
                 rng.NextBytes(content);
@@ -189,19 +187,16 @@ namespace TrFileTransfer.Tests
                 bool serverOk = false;
                 string serverError = null;
 
-                server = new TransferUdpServer("127.0.0.1", port, recvDir);
+                server = new TransferUdtServer("127.0.0.1", port, recvDir);
                 server.OnStarted += () => serverStarted.Set();
-                server.OnSessionStarted += session =>
-                {
-                    session.OnTransferComplete += () => { serverOk = true; serverDone.Set(); };
-                    session.OnError += msg => { serverError = msg; serverDone.Set(); };
-                };
-
+                server.OnTransferComplete += () => { serverOk = true; serverDone.Set(); };
+                server.OnError += msg => { serverError = msg; serverDone.Set(); };
                 server.Start();
-                if (!serverStarted.WaitOne(5000))
-                    throw new Exception("UDP server did not start within 5s");
 
-                var client = new TransferUdpClient("127.0.0.1", port, testFile);
+                if (!serverStarted.WaitOne(5000))
+                    throw new Exception("UDT server did not start within 5s");
+
+                var client = new TransferUdtClient("127.0.0.1", port, testFile);
                 var clientDone = new ManualResetEvent(false);
                 bool clientOk = false;
                 client.OnTransferComplete += () => { clientOk = true; clientDone.Set(); };
@@ -210,88 +205,23 @@ namespace TrFileTransfer.Tests
                 var sendTask = client.SendAsync();
 
                 if (!serverDone.WaitOne(60000))
-                    throw new Exception("UDP server did not complete within 60s");
+                    throw new Exception("UDT server did not complete within 60s");
                 if (!serverOk)
-                    throw new Exception("UDP server error: " + (serverError ?? "unknown"));
+                    throw new Exception("UDT server error: " + (serverError ?? "unknown"));
 
                 sendTask.Wait(60000);
                 if (!clientDone.WaitOne(5000))
-                    throw new Exception("UDP client did not fire completion event");
+                    throw new Exception("UDT client did not fire completion event");
                 if (!clientOk)
-                    throw new Exception("UDP client transfer failed");
+                    throw new Exception("UDT client transfer failed");
 
                 Thread.Sleep(500);
 
-                var receivedFile = Path.Combine(recvDir, "udp_test.bin");
-                Assert.True(File.Exists(receivedFile), "received UDP file exists");
+                var receivedFile = Path.Combine(recvDir, "udt_test.bin");
+                Assert.True(File.Exists(receivedFile), "received UDT file exists");
                 var receivedContent = File.ReadAllBytes(receivedFile);
-                Assert.Equal(content.Length, receivedContent.Length, "UDP file size matches");
-                Assert.True(Utils.ConstantTimeEquals(content, receivedContent), "UDP content SHA256 match");
-            }
-            finally
-            {
-                try { if (server != null) server.Stop(); } catch { }
-                try { Directory.Delete(sendDir, true); } catch { }
-                try { Directory.Delete(recvDir, true); } catch { }
-            }
-        }
-
-        private static void TcpChunkedConcurrent()
-        {
-            int port = FindFreePort();
-            string sendDir = Path.Combine(Path.GetTempPath(), "tr_it_csend_" + Guid.NewGuid().ToString("N"));
-            string recvDir = Path.Combine(Path.GetTempPath(), "tr_it_crecv_" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(sendDir);
-            Directory.CreateDirectory(recvDir);
-
-            TransferServer server = null;
-            try
-            {
-                var testFile = Path.Combine(sendDir, "bigfile.bin");
-                var rng = new Random(42);
-                var content = new byte[1024 * 200]; // 200 KB
-                rng.NextBytes(content);
-                File.WriteAllBytes(testFile, content);
-
-                var serverStarted = new ManualResetEvent(false);
-                var serverDone = new ManualResetEvent(false);
-                bool serverOk = false;
-
-                server = new TransferServer("127.0.0.1", port, recvDir);
-                server.OnStarted += () => serverStarted.Set();
-                server.OnTransferComplete += () => { serverOk = true; serverDone.Set(); };
-                server.OnError += msg => serverDone.Set();
-                server.Start();
-
-                if (!serverStarted.WaitOne(5000))
-                    throw new Exception("Server did not start");
-
-                var ct = new ConcurrentTransfer("127.0.0.1", port, testFile, 3, isTcp: true);
-                var clientDone = new ManualResetEvent(false);
-                bool clientOk = false;
-                ct.OnTransferComplete += () => { clientOk = true; clientDone.Set(); };
-                ct.OnError += msg => clientDone.Set();
-
-                var sendTask = ct.SendAsync();
-
-                if (!serverDone.WaitOne(60000))
-                    throw new Exception("Server did not complete within 60s");
-                if (!serverOk)
-                    throw new Exception("Server transfer failed");
-
-                sendTask.Wait(60000);
-                if (!clientDone.WaitOne(5000))
-                    throw new Exception("Client did not fire completion");
-                if (!clientOk)
-                    throw new Exception("Concurrent transfer failed");
-
-                Thread.Sleep(500);
-
-                var receivedFile = Path.Combine(recvDir, "bigfile.bin");
-                Assert.True(File.Exists(receivedFile), "received file exists");
-                var receivedContent = File.ReadAllBytes(receivedFile);
-                Assert.Equal(content.Length, receivedContent.Length, "file size matches");
-                Assert.True(Utils.ConstantTimeEquals(content, receivedContent), "content match");
+                Assert.Equal(content.Length, receivedContent.Length, "UDT file size matches");
+                Assert.True(Utils.ConstantTimeEquals(content, receivedContent), "UDT content SHA256 match");
             }
             finally
             {

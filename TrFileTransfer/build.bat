@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 cd /d "%~dp0"
 set FRAMEWORK=%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319
 set CSC=%FRAMEWORK%\csc.exe
@@ -13,6 +13,15 @@ if not exist "%CSC%" (
 )
 
 echo Building TrFileTransfer...
+
+set RESOURCE=
+if exist "udt.dll" (
+    echo   Embedding udt.dll...
+    set RESOURCE=/resource:udt.dll,TrFileTransfer.udt.dll
+) else (
+    echo   WARNING: udt.dll not found. UDT transfers will fail at runtime until udt.dll is placed alongside the exe.
+)
+
 echo.
 
 "%CSC%" ^
@@ -25,16 +34,13 @@ echo.
     /reference:"%FRAMEWORK%\System.Drawing.dll" ^
     /optimize+ ^
     /doc:TrFileTransfer.xml ^
+    %RESOURCE% ^
     Config.cs ^
     Shared.cs ^
     L10N.cs ^
-    UdpProtocol.cs ^
     TransferServer.cs ^
-    TransferUdpSession.cs ^
-    TransferUdpServer.cs ^
+    TransferUdt.cs ^
     TransferClient.cs ^
-    TransferUdpClient.cs ^
-    ConcurrentTransfer.cs ^
     MainForm.cs ^
     Program.cs
 

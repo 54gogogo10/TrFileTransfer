@@ -10,11 +10,6 @@ namespace TrFileTransfer
         // ---- Window title ----
         public static string AppTitle { get { return IsChinese ? "文件传输" : "File Transfer"; } }
 
-        // ---- Mode ----
-        public static string ModeGroup { get { return IsChinese ? "模式" : "Mode"; } }
-        public static string ModeServer { get { return IsChinese ? "服务器 (接收)" : "Server (Receive)"; } }
-        public static string ModeClient { get { return IsChinese ? "客户端 (发送)" : "Client (Send)"; } }
-
         // ---- Server ----
         public static string ServerSettings { get { return IsChinese ? "服务器设置" : "Server Settings"; } }
         public static string BindAddress { get { return IsChinese ? "绑定地址:" : "Bind:"; } }
@@ -69,7 +64,7 @@ namespace TrFileTransfer
         public static string BrowseDirDesc { get { return IsChinese ? "选择接收文件的保存目录" : "Select directory to save received files"; } }
         public static string BrowseFileTitle { get { return IsChinese ? "选择要发送的文件" : "Select file to send"; } }
         public static string ErrorPrefix { get { return IsChinese ? "错误: " : "Error: "; } }
-        public static string NoProtocolSelected { get { return IsChinese ? "请至少选择一个服务器协议（TCP/UDP）。" : "Select at least one server protocol (TCP/UDP)."; } }
+        public static string NoProtocolSelected { get { return IsChinese ? "请至少选择一个服务器协议（TCP/UDT）。" : "Select at least one server protocol (TCP/UDT)."; } }
         public static string ServerStartFailed { get { return IsChinese ? "服务器启动失败。请检查端口是否被占用。" : "Server start failed. Check if port is in use."; } }
 
         // ---- Folder mode ----
@@ -220,84 +215,21 @@ namespace TrFileTransfer
                 : string.Format("Transfer complete: {0} ({1}) in {2:F1}s ({3}/s)", fileName, sizeStr, secs, speedStr);
         }
 
-        // ---- UDP server log messages ----
-        public static string UdpS_Started(string port, string dir)
+        // ---- UDT server log messages ----
+        public static string UdtS_Started(string port, string dir)
         {
             return IsChinese
-                ? string.Format("UDP服务器已启动，端口 {0}。保存目录: {1}", port, dir)
-                : string.Format("UDP server started on port {0}. Save directory: {1}", port, dir);
+                ? string.Format("UDT服务器已启动，端口 {0}。保存目录: {1}", port, dir)
+                : string.Format("UDT server started on port {0}. Save directory: {1}", port, dir);
         }
-        public static string UdpS_Stopped { get { return IsChinese ? "UDP服务器已停止。" : "UDP server stopped."; } }
-        public static string UdpS_ReceivedHello(object ep)
-        {
-            return IsChinese
-                ? string.Format("收到来自 {0} 的HELLO", ep)
-                : string.Format("Received HELLO from {0}", ep);
-        }
-        public static string UdpS_Receiving(string fileName, string sizeStr)
-        {
-            return IsChinese
-                ? string.Format("正在接收: {0} ({1}) [UDP]", fileName, sizeStr)
-                : string.Format("Receiving: {0} ({1}) [UDP]", fileName, sizeStr);
-        }
-        public static string UdpS_ReceiveError(string msg)
-        {
-            return IsChinese
-                ? string.Format("接收错误: {0}", msg)
-                : string.Format("Receive error: {0}", msg);
-        }
-        public static string UdpS_DataTimeout { get { return IsChinese ? "等待数据超时，传输中止" : "Timeout waiting for data, aborting"; } }
-        public static string UdpS_QueuedHello(object ep)
-        {
-            return IsChinese
-                ? string.Format("处理排队的HELLO来自 {0}", ep)
-                : string.Format("Processing queued HELLO from {0}", ep);
-        }
-        public static string UdpS_QueuedFolderEnd
-        {
-            get
-            {
-                return IsChinese
-                    ? "处理排队的文件夹结束信号，发送确认"
-                    : "Processing queued folder end signal, sending acknowledgment";
-            }
-        }
-        public static string UdpS_FolderEndReceived
-        {
-            get
-            {
-                return IsChinese
-                    ? "收到文件夹传输结束信号，发送确认"
-                    : "Received folder transfer end signal, sending acknowledgment";
-            }
-        }
+        public static string UdtS_Stopped { get { return IsChinese ? "UDT服务器已停止。" : "UDT server stopped."; } }
 
-        // ---- UDP client log messages ----
-        public static string UdpC_Connecting(string ip, int port)
+        // ---- UDT client log messages ----
+        public static string UdtC_Connecting(string ip, int port)
         {
             return IsChinese
-                ? string.Format("UDP 正在连接 {0}:{1}...", ip, port)
-                : string.Format("UDP connecting to {0}:{1}...", ip, port);
-        }
-        public static string UdpC_Sending(string fileName, string sizeStr, int window)
-        {
-            return IsChinese
-                ? string.Format("正在发送: {0} ({1}) [UDP, 窗口={2}]", fileName, sizeStr, window)
-                : string.Format("Sending: {0} ({1}) [UDP, window={2}]", fileName, sizeStr, window);
-        }
-        public static string UdpC_SendingFolder(string name, int count, string sizeStr)
-        {
-            return IsChinese
-                ? string.Format("UDP 正在发送文件夹: {0} ({1} 个文件, {2})", name, count, sizeStr)
-                : string.Format("UDP sending folder: {0} ({1} files, {2})", name, count, sizeStr);
-        }
-        public static string UdpC_ServerNotResponding { get { return IsChinese ? "服务器无响应" : "Server not responding"; } }
-        public static string UdpC_TooManyRetransmissions { get { return IsChinese ? "重传次数过多，传输中止" : "Too many retransmissions, aborting"; } }
-        public static string UdpC_TimeoutRetransmitting(int seqBase)
-        {
-            return IsChinese
-                ? string.Format("超时，从 #{0} 重传", seqBase)
-                : string.Format("Timeout, retransmitting from #{0}", seqBase);
+                ? string.Format("UDT 正在连接 {0}:{1}...", ip, port)
+                : string.Format("UDT connecting to {0}:{1}...", ip, port);
         }
         // ---- Monitor mode ----
         public static string MonitorMode { get { return IsChinese ? "监控模式" : "Monitor Mode"; } }
@@ -347,14 +279,5 @@ namespace TrFileTransfer
             }
         }
 
-        public static string UdpC_FolderNotConfirmed
-        {
-            get
-            {
-                return IsChinese
-                    ? "服务器未确认文件夹传输完成"
-                    : "Server did not confirm folder transfer completion";
-            }
-        }
     }
 }

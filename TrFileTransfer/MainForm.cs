@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -17,9 +17,9 @@ namespace TrFileTransfer
 
         // Protocol — server checkboxes, client radio buttons
         private CheckBox _chkServerTcp;
-        private CheckBox _chkServerUdp;
+        private CheckBox _chkServerUdt;
         private RadioButton _rbClientTcp;
-        private RadioButton _rbClientUdp;
+        private RadioButton _rbClientUdt;
 
         // Server controls
         private GroupBox _gbServer;
@@ -46,9 +46,6 @@ namespace TrFileTransfer
         private Button _btnCancel;
         private CheckBox _chkFolder;
         private CheckBox _chkMonitor;
-        private NumericUpDown _numConcurrency;
-        private Label _lblConcurrency;
-        private Button _btnAbout;
 
         // Progress
         private GroupBox _gbProgressS;
@@ -61,15 +58,15 @@ namespace TrFileTransfer
         // Log
         private GroupBox _gbLog;
         private ListBox _lstLog;
-        private Button _btnExportLog;
 
         // State
         private TransferServer _server;
         private TransferClient _client;
-        private TransferUdpServer _serverUdp;
-        private TransferUdpClient _clientUdp;
+        private TransferUdtServer _serverUdt;
+        private TransferUdtClient _clientUdt;
         private int _serverCount;
         private Dictionary<IPEndPoint, Panel> _tcpCards = new Dictionary<IPEndPoint, Panel>();
+        private Dictionary<IPEndPoint, Panel> _udtCards = new Dictionary<IPEndPoint, Panel>();
 
         // Monitor mode
         private System.Threading.CancellationTokenSource _monitorCts;
@@ -116,7 +113,7 @@ namespace TrFileTransfer
             _lblPortS = new Label { Location = new Point(220, 28), Width = 50, TextAlign = ContentAlignment.MiddleRight };
             _txtPortS = new TextBox { Text = "8080", Location = new Point(275, 25), Width = 55 };
             _chkServerTcp = new CheckBox { Text = "TCP", Location = new Point(340, 23), Width = 50, Checked = true };
-            _chkServerUdp = new CheckBox { Text = "UDP", Location = new Point(392, 23), Width = 55 };
+            _chkServerUdt = new CheckBox { Text = "UDT", Location = new Point(392, 23), Width = 55 };
             _lblSaveDir = new Label { Location = new Point(15, 63), Width = 60, TextAlign = ContentAlignment.MiddleRight };
             _txtSaveDir = new TextBox { Text = Environment.GetFolderPath(Environment.SpecialFolder.Desktop), Location = new Point(80, 60), Width = 390 };
             _btnBrowseDir = new Button { Location = new Point(475, 59), Width = 85 };
@@ -130,7 +127,7 @@ namespace TrFileTransfer
             _gbServer.Controls.Add(_lblPortS);
             _gbServer.Controls.Add(_txtPortS);
             _gbServer.Controls.Add(_chkServerTcp);
-            _gbServer.Controls.Add(_chkServerUdp);
+            _gbServer.Controls.Add(_chkServerUdt);
             _gbServer.Controls.Add(_lblSaveDir);
             _gbServer.Controls.Add(_txtSaveDir);
             _gbServer.Controls.Add(_btnBrowseDir);
@@ -144,7 +141,7 @@ namespace TrFileTransfer
             _lblPortC = new Label { Location = new Point(212, 28), Width = 50, TextAlign = ContentAlignment.MiddleRight };
             _txtPortC = new TextBox { Text = "8080", Location = new Point(267, 25), Width = 55 };
             _rbClientTcp = new RadioButton { Text = "TCP", Location = new Point(335, 23), Width = 50, Checked = true };
-            _rbClientUdp = new RadioButton { Text = "UDP", Location = new Point(387, 23), Width = 55 };
+            _rbClientUdt = new RadioButton { Text = "UDT", Location = new Point(387, 23), Width = 55 };
             _btnSend = new Button { Location = new Point(455, 20), Width = 110, Height = 30 };
             _btnSend.Click += BtnSend_Click;
             _lblFile = new Label { Location = new Point(15, 63), Width = 48, TextAlign = ContentAlignment.MiddleRight };
@@ -155,14 +152,6 @@ namespace TrFileTransfer
             _chkFolder.CheckedChanged += ChkFolder_CheckedChanged;
             _chkMonitor = new CheckBox { Location = new Point(70, 95), Width = 100, TextAlign = ContentAlignment.MiddleLeft };
             _chkMonitor.CheckedChanged += ChkMonitor_CheckedChanged;
-            _lblConcurrency = new Label { Location = new Point(290, 95), Width = 40, TextAlign = ContentAlignment.MiddleRight };
-            _numConcurrency = new NumericUpDown
-            {
-                Location = new Point(335, 92), Width = 45,
-                Minimum = 1, Maximum = 64, Value = 1
-            };
-            _btnAbout = new Button { Location = new Point(395, 14), Width = 75, Height = 23 };
-            _btnAbout.Click += BtnAbout_Click;
             _btnCancel = new Button { Location = new Point(455, 56), Width = 110, Height = 30, Enabled = false };
             _btnCancel.Click += BtnCancel_Click;
             _gbClient.Controls.Add(_lblServerIp);
@@ -170,9 +159,7 @@ namespace TrFileTransfer
             _gbClient.Controls.Add(_lblPortC);
             _gbClient.Controls.Add(_txtPortC);
             _gbClient.Controls.Add(_rbClientTcp);
-            _gbClient.Controls.Add(_rbClientUdp);
-            _gbClient.Controls.Add(_lblConcurrency);
-            _gbClient.Controls.Add(_numConcurrency);
+            _gbClient.Controls.Add(_rbClientUdt);
             _gbClient.Controls.Add(_lblFile);
             _gbClient.Controls.Add(_txtFile);
             _gbClient.Controls.Add(_btnBrowseFile);
@@ -207,14 +194,10 @@ namespace TrFileTransfer
 
             // Log panel
             _gbLog = new GroupBox { Location = new Point(12, 596), Size = new Size(580, 170) };
-            _lstLog = new ListBox { Location = new Point(10, 20), Width = 555, Height = 124, IntegralHeight = false, Font = new Font("Consolas", 8.5f) };
-            _btnExportLog = new Button { Location = new Point(485, 146), Width = 80, Height = 22 };
-            _btnExportLog.Click += BtnExportLog_Click;
+            _lstLog = new ListBox { Location = new Point(10, 20), Width = 555, Height = 140, IntegralHeight = false, Font = new Font("Consolas", 8.5f) };
             _gbLog.Controls.Add(_lstLog);
-            _gbLog.Controls.Add(_btnExportLog);
 
             Controls.Add(_cmbLang);
-            Controls.Add(_btnAbout);
             Controls.Add(_gbServer);
             Controls.Add(_gbClient);
             Controls.Add(_gbProgressS);
@@ -249,14 +232,11 @@ namespace TrFileTransfer
             _btnCancel.Text = L.CancelBtn;
             _chkFolder.Text = L.FolderMode;
             _chkMonitor.Text = L.MonitorMode;
-            _lblConcurrency.Text = L.ConcurrencyLabel;
-            _btnAbout.Text = L.AboutBtn;
 
             _gbProgressS.Text = L.ServerProgress;
             _gbProgressC.Text = L.ClientProgress;
 
             _gbLog.Text = L.LogGroup;
-            _btnExportLog.Text = L.ExportLog;
 
             PopulateBindAddresses();
         }
@@ -268,10 +248,10 @@ namespace TrFileTransfer
 
             // Protocol
             _chkServerTcp.Checked = Config.GetBool("ServerTCP", true);
-            _chkServerUdp.Checked = Config.GetBool("ServerUDP", false);
+            _chkServerUdt.Checked = Config.GetBool("ServerUDT", false);
             string clientProto = Config.Get("ClientProtocol", "TCP");
-            _rbClientTcp.Checked = clientProto != "UDP";
-            _rbClientUdp.Checked = clientProto == "UDP";
+            _rbClientTcp.Checked = clientProto != "UDT";
+            _rbClientUdt.Checked = clientProto == "UDT";
 
             // Server
             _txtPortS.Text = Config.Get("ServerPort", "8080");
@@ -291,15 +271,14 @@ namespace TrFileTransfer
             _txtFile.Text = Config.Get("LastPath", "");
             _chkFolder.Checked = Config.GetBool("FolderMode", false);
             _chkMonitor.Checked = Config.GetBool("MonitorMode", false);
-            _numConcurrency.Value = Config.GetInt("Concurrency", 1);
         }
 
         private void SaveConfig()
         {
             Config.Set("Language", _cmbLang.SelectedIndex == 1 ? "中文" : "English");
             Config.SetBool("ServerTCP", _chkServerTcp.Checked);
-            Config.SetBool("ServerUDP", _chkServerUdp.Checked);
-            Config.Set("ClientProtocol", _rbClientUdp.Checked ? "UDP" : "TCP");
+            Config.SetBool("ServerUDT", _chkServerUdt.Checked);
+            Config.Set("ClientProtocol", _rbClientUdt.Checked ? "UDT" : "TCP");
             Config.Set("ServerPort", _txtPortS.Text.Trim());
             Config.Set("SaveDir", _txtSaveDir.Text.Trim());
             Config.Set("ServerBind", _cmbBind.SelectedItem != null ? _cmbBind.SelectedItem.ToString() : "");
@@ -308,7 +287,6 @@ namespace TrFileTransfer
             Config.Set("LastPath", _txtFile.Text.Trim());
             Config.SetBool("FolderMode", _chkFolder.Checked);
             Config.SetBool("MonitorMode", _chkMonitor.Checked);
-            Config.SetInt("Concurrency", (int)_numConcurrency.Value);
             Config.Save();
         }
 
@@ -420,7 +398,7 @@ namespace TrFileTransfer
             if (string.IsNullOrWhiteSpace(bindAddr))
                 bindAddr = "0.0.0.0";
 
-            if (!_chkServerTcp.Checked && !_chkServerUdp.Checked)
+            if (!_chkServerTcp.Checked && !_chkServerUdt.Checked)
             {
                 MessageBox.Show(L.NoProtocolSelected, L.DlgError, MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
@@ -468,36 +446,43 @@ namespace TrFileTransfer
                 tcpServer.Start();
             }
 
-            if (_chkServerUdp.Checked)
+            if (_chkServerUdt.Checked)
             {
-                bool udpStarted = false;
-                _serverUdp = new TransferUdpServer(bindAddr, port, saveDir);
-                _serverUdp.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
-                _serverUdp.OnSessionStarted += session => this.Invoke((Action)(() =>
+                bool udtStarted = false;
+                var udtServer = new TransferUdtServer(bindAddr, port, saveDir);
+                udtServer.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
+                udtServer.OnError += msg => this.Invoke((Action)(() => _lblStatusS.Text = L.ErrorPrefix + msg));
+                udtServer.OnClientConnected += ep => this.Invoke((Action)(() => { }));
+                udtServer.OnClientProgress += (ep, p) => this.Invoke((Action)(() =>
                 {
-                    var cardPanel = CreateProgressCard(session);
-                    session.OnProgress += p => this.Invoke((Action)(() => UpdateCardProgress(cardPanel, p)));
-                    session.OnTransferComplete += () => this.Invoke((Action)(() =>
-                    {
-                        UpdateCardComplete(cardPanel);
-                        _lblStatusS.Text = L.Listening;
-                    }));
-                    session.OnStopped += () => this.Invoke((Action)(() => UpdateCardComplete(cardPanel)));
-                    session.OnError += msg => this.Invoke((Action)(() => AddLog(L.ErrorPrefix + msg)));
+                    var card = GetOrCreateUdtCard(ep);
+                    UpdateCardProgress(card, p);
                 }));
-                _serverUdp.OnStarted += () => this.Invoke((Action)(() =>
+                udtServer.OnClientTransferComplete += ep => this.Invoke((Action)(() =>
                 {
-                    udpStarted = true;
+                    Panel card;
+                    if (_udtCards.TryGetValue(ep, out card)) { UpdateCardComplete(card); _udtCards.Remove(ep); }
+                }));
+                udtServer.OnTransferComplete += () => this.Invoke((Action)(() =>
+                {
+                    _lblStatusS.Text = L.Listening;
+                }));
+                udtServer.OnStarted += () => this.Invoke((Action)(() =>
+                {
+                    udtStarted = true;
                     _serverCount++;
                     OnServerStarted();
                 }));
-                _serverUdp.OnStopped += () => this.Invoke((Action)(() =>
+                udtServer.OnStopped += () => this.Invoke((Action)(() =>
                 {
-                    if (!udpStarted) return; // start failed, ignore
-                    _serverUdp = null;
+                    if (!udtStarted) return;
+                    foreach (var c in _udtCards.Values) UpdateCardComplete(c);
+                    _udtCards.Clear();
+                    _serverUdt = null;
                     OnServerStopped();
                 }));
-                _serverUdp.Start();
+                _serverUdt = udtServer;
+                udtServer.Start();
             }
 
             if (_serverCount == 0)
@@ -511,7 +496,7 @@ namespace TrFileTransfer
         private void DisableServerInputs()
         {
             _chkServerTcp.Enabled = false;
-            _chkServerUdp.Enabled = false;
+            _chkServerUdt.Enabled = false;
             _cmbLang.Enabled = false;
             _cmbBind.Enabled = false;
             _txtPortS.Enabled = false;
@@ -524,7 +509,7 @@ namespace TrFileTransfer
             _btnStartServer.Enabled = true;
             _btnStopServer.Enabled = false;
             _chkServerTcp.Enabled = true;
-            _chkServerUdp.Enabled = true;
+            _chkServerUdt.Enabled = true;
             _cmbLang.Enabled = true;
             _cmbBind.Enabled = true;
             _txtPortS.Enabled = true;
@@ -537,7 +522,7 @@ namespace TrFileTransfer
             _btnSend.Enabled = false;
             _btnCancel.Enabled = true;
             _rbClientTcp.Enabled = false;
-            _rbClientUdp.Enabled = false;
+            _rbClientUdt.Enabled = false;
             _cmbLang.Enabled = false;
             _txtServerIp.Enabled = false;
             _txtPortC.Enabled = false;
@@ -545,7 +530,6 @@ namespace TrFileTransfer
             _btnBrowseFile.Enabled = false;
             _chkFolder.Enabled = false;
             _chkMonitor.Enabled = false;
-            _numConcurrency.Enabled = false;
         }
 
         private void OnServerStarted()
@@ -567,7 +551,7 @@ namespace TrFileTransfer
         {
             _serverCount = 0; // reset before stopping so OnStopped handlers see zero
             if (_server != null) { _server.Stop(); _server = null; }
-            if (_serverUdp != null) { _serverUdp.Stop(); _serverUdp = null; }
+            if (_serverUdt != null) { _serverUdt.Stop(); _serverUdt = null; }
         }
 
         private async void BtnSend_Click(object sender, EventArgs e)
@@ -622,50 +606,23 @@ namespace TrFileTransfer
 
             DisableClientInputs();
 
-            int concurrency = (int)_numConcurrency.Value;
-            if (concurrency > 1 && !isFolder)
-            {
-                var ct = new ConcurrentTransfer(ip, port, path, concurrency, _rbClientTcp.Checked);
-                WireConcurrentEvents(ct);
-                await ct.SendAsync();
-            }
-            else if (concurrency > 1 && isFolder)
-            {
-                var ct = new ConcurrentTransfer(ip, port, path, concurrency, _rbClientTcp.Checked);
-                WireConcurrentEvents(ct);
-                await ct.SendFolderAsync();
-            }
-            else if (_rbClientTcp.Checked)
+            if (_rbClientTcp.Checked)
             {
                 _client = new TransferClient(ip, port, path);
                 WireClientEvents(_client);
-                try
-                {
-                    if (isFolder)
-                        await _client.SendFolderAsync(path);
-                    else
-                        await _client.SendAsync();
-                }
-                catch (Exception ex)
-                {
-                    AddLog(L.ErrorPrefix + ex.Message);
-                }
+                if (isFolder)
+                    await _client.SendFolderAsync(path);
+                else
+                    await _client.SendAsync();
             }
             else
             {
-                _clientUdp = new TransferUdpClient(ip, port, path);
-                WireUdpClientEvents(_clientUdp);
-                try
-                {
-                    if (isFolder)
-                        await _clientUdp.SendFolderAsync(path);
-                    else
-                        await _clientUdp.SendAsync();
-                }
-                catch (Exception ex)
-                {
-                    AddLog(L.ErrorPrefix + ex.Message);
-                }
+                _clientUdt = new TransferUdtClient(ip, port, path);
+                WireUdtClientEvents(_clientUdt);
+                if (isFolder)
+                    await _clientUdt.SendFolderAsync(path);
+                else
+                    await _clientUdt.SendAsync();
             }
 
             try { ResetClientUI(); } catch { }
@@ -690,25 +647,7 @@ namespace TrFileTransfer
             c.OnStopped += () => this.Invoke((Action)(() => UpdateCardComplete(card)));
         }
 
-        private void WireConcurrentEvents(ConcurrentTransfer ct)
-        {
-            var card = CreateTransferCard(_progressPanelC);
-            ct.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
-            ct.OnProgress += p => this.Invoke((Action)(() => UpdateCardProgress(card, p)));
-            ct.OnError += msg => this.Invoke((Action)(() =>
-            {
-                AddLog(L.ErrorPrefix + msg);
-                ResetClientUI();
-                UpdateCardComplete(card);
-            }));
-            ct.OnTransferComplete += () => this.Invoke((Action)(() =>
-            {
-                ResetClientUI();
-                UpdateCardComplete(card);
-            }));
-        }
-
-        private void WireUdpClientEvents(TransferUdpClient c)
+        private void WireUdtClientEvents(TransferUdtClient c)
         {
             var card = CreateTransferCard(_progressPanelC);
             c.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
@@ -736,8 +675,8 @@ namespace TrFileTransfer
             }
             if (_client != null)
                 _client.Cancel();
-            if (_clientUdp != null)
-                _clientUdp.Cancel();
+            if (_clientUdt != null)
+                _clientUdt.Cancel();
             _btnCancel.Enabled = false;
             _lblStatusC.Text = L.Cancelling;
         }
@@ -752,8 +691,7 @@ namespace TrFileTransfer
                 _cmbLang.Enabled = true;
             }
             _rbClientTcp.Enabled = true;
-            _rbClientUdp.Enabled = true;
-            _numConcurrency.Enabled = true;
+            _rbClientUdt.Enabled = true;
             _txtServerIp.Enabled = true;
             _txtPortC.Enabled = true;
             _txtFile.Enabled = true;
@@ -771,10 +709,8 @@ namespace TrFileTransfer
 
         private class ProgressCardInfo
         {
-            public TransferUdpSession Session;
             public ProgressBar Bar;
             public Label Label;
-            public DateTime Created = DateTime.UtcNow;
         }
 
         private Panel GetOrCreateTcpCard(IPEndPoint ep)
@@ -809,11 +745,15 @@ namespace TrFileTransfer
             return panel;
         }
 
-        private Panel CreateProgressCard(TransferUdpSession session)
+        private Panel GetOrCreateUdtCard(IPEndPoint ep)
         {
-            var panel = CreateTransferCard(_progressPanelS);
-            (panel.Tag as ProgressCardInfo).Session = session;
-            return panel;
+            Panel card;
+            if (!_udtCards.TryGetValue(ep, out card))
+            {
+                card = CreateTransferCard(_progressPanelS);
+                _udtCards[ep] = card;
+            }
+            return card;
         }
 
         private void UpdateCardProgress(Panel card, TransferProgress p)
@@ -949,13 +889,13 @@ namespace TrFileTransfer
                 }
                 else
                 {
-                    var clientUdp = new TransferUdpClient(ip, port, filePath);
-                    clientUdp.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
-                    clientUdp.OnProgress += p => this.Invoke((Action)(() => UpdateCardProgress(card, p)));
-                    clientUdp.OnError += msg => this.Invoke((Action)(() => AddLog(L.MonitorFileSendFailed(fileName, msg))));
-                    clientUdp.OnTransferComplete += () => { tcs.TrySetResult(true); this.Invoke((Action)(() => UpdateCardComplete(card))); };
-                    clientUdp.OnStopped += () => { tcs.TrySetResult(false); this.Invoke((Action)(() => UpdateCardComplete(card))); };
-                    await clientUdp.SendAsync();
+                    var clientUdt = new TransferUdtClient(ip, port, filePath);
+                    clientUdt.OnLog += msg => this.Invoke((Action)(() => AddLog(msg)));
+                    clientUdt.OnProgress += p => this.Invoke((Action)(() => UpdateCardProgress(card, p)));
+                    clientUdt.OnError += msg => this.Invoke((Action)(() => AddLog(L.MonitorFileSendFailed(fileName, msg))));
+                    clientUdt.OnTransferComplete += () => { tcs.TrySetResult(true); this.Invoke((Action)(() => UpdateCardComplete(card))); };
+                    clientUdt.OnStopped += () => { tcs.TrySetResult(false); this.Invoke((Action)(() => UpdateCardComplete(card))); };
+                    await clientUdt.SendAsync();
                 }
 
                 success = await tcs.Task;
@@ -1035,37 +975,6 @@ namespace TrFileTransfer
             return false;
         }
 
-        private void BtnExportLog_Click(object sender, EventArgs e)
-        {
-            using (var dlg = new SaveFileDialog())
-            {
-                dlg.Title = L.ExportLogTitle;
-                dlg.Filter = "Log files (*.log)|*.log|Text files (*.txt)|*.txt|All files (*.*)|*.*";
-                dlg.DefaultExt = "log";
-                dlg.FileName = "TrFileTransfer_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".log";
-                if (dlg.ShowDialog() == DialogResult.OK)
-                {
-                    try
-                    {
-                        var lines = new string[_lstLog.Items.Count];
-                        for (int i = 0; i < lines.Length; i++)
-                            lines[i] = _lstLog.Items[i].ToString();
-                        File.WriteAllLines(dlg.FileName, lines);
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show(L.ExportLogFailed + ex.Message, L.DlgError,
-                            MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-                }
-            }
-        }
-
-        private void BtnAbout_Click(object sender, EventArgs e)
-        {
-            MessageBox.Show(L.AboutText, L.AboutTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }
-
         /// <summary>Stops any active transfer before closing the window.</summary>
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
@@ -1076,12 +985,12 @@ namespace TrFileTransfer
             }
             if (_server != null)
                 _server.Stop();
-            if (_serverUdp != null)
-                _serverUdp.Stop();
+            if (_serverUdt != null)
+                _serverUdt.Stop();
             if (_client != null)
                 _client.Cancel();
-            if (_clientUdp != null)
-                _clientUdp.Cancel();
+            if (_clientUdt != null)
+                _clientUdt.Cancel();
             base.OnFormClosing(e);
         }
     }
