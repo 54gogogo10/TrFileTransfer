@@ -28,6 +28,7 @@ namespace TrFileTransfer.Tests
             runner.Run("Integration_TCP_Folder", TcpFolder);
             runner.Run("Integration_TCP_Concurrent10", TcpConcurrent10);
             runner.Run("Integration_TCP_Concurrent64", TcpConcurrent64);
+            runner.Run("Integration_TCP_LargeFile", TcpLargeFile);
             runner.Run("Integration_UDT_SingleFile", UdtSingleFile);
             runner.Run("Integration_UDT_Concurrent10", UdtConcurrent10);
             runner.Run("Integration_UDT_Concurrent64", UdtConcurrent64);
@@ -314,6 +315,7 @@ namespace TrFileTransfer.Tests
 
         private static void TcpConcurrent10()  { ConcurrentTransferTest("tr_tcpc10", true, 10, 10, 60); }
         private static void TcpConcurrent64()  { ConcurrentTransferTest("tr_tcpc64", true, 64, 64, 120); }
+        private static void TcpLargeFile()     { ConcurrentTransferTest("tr_tcplg", true, 16, 200, 300); }
 
         private static void UdtConcurrent10()  { ConcurrentTransferTest("tr_udtc10", false, 10, 10, 120); }
         private static void UdtConcurrent64()  { ConcurrentTransferTest("tr_udtc64", false, 64, 64, 240); }
