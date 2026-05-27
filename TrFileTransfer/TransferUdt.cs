@@ -372,9 +372,11 @@ namespace TrFileTransfer
 
                     UdtNative.SetTimeout(clientSocket, 30000, 30000);
                     lock (_clientSockets) { _clientSockets.Add(clientSocket); }
+                    // sin_addr/sin_port are uint/ushort in network byte order.
+                    // Must cast to unsigned before NetworkToHostOrder to avoid sign extension.
                     var clientEp = new IPEndPoint(
-                        new IPAddress((long)IPAddress.NetworkToHostOrder((int)addr.sin_addr)),
-                        IPAddress.NetworkToHostOrder((short)addr.sin_port));
+                        new IPAddress((long)(uint)IPAddress.NetworkToHostOrder((int)addr.sin_addr)),
+                        (int)(ushort)IPAddress.NetworkToHostOrder((short)addr.sin_port));
                     Log(L.S_ClientConnected(clientEp));
                     var _ = HandleClient(clientSocket, ct, clientEp);
                 }
@@ -793,6 +795,9 @@ namespace TrFileTransfer
             Log(L.C_Connected(_serverIp, _port));
             UdtNative.SetTimeout(_socket, 30000, 30000);
 
+            // UDT connect() handshake is asynchronous — wait for socket to leave BOUND state
+            await UdtIo.WaitForConnectionReady(_socket, ct);
+
             var fileInfo = new FileInfo(_filePath);
             long fileSize = fileInfo.Length;
             string fileName = fileInfo.Name;
@@ -837,6 +842,9 @@ namespace TrFileTransfer
             }
             Log(L.C_Connected(_serverIp, _port));
             UdtNative.SetTimeout(_socket, 30000, 30000);
+
+            // UDT connect() handshake is asynchronous — wait for socket to leave BOUND state
+            await UdtIo.WaitForConnectionReady(_socket, ct);
 
             string folderName = Path.GetFileName(folderPath);
             if (string.IsNullOrWhiteSpace(folderName))
@@ -1029,6 +1037,22 @@ namespace TrFileTransfer
                     throw new IOException("UDT send failed: " + err);
                 }
                 totalSent += sent;
+            }
+        }
+
+        /// <summary>Wait for UDT socket to transition from BOUND to CONNECTED state after async handshake.</summary>
+        public static async Task WaitForConnectionReady(int socket, CancellationToken ct)
+        {
+            // Poll with empty send until socket leaves BOUND state (handshake complete).
+            // UDT returns ERROR with "BOUND" message until connection handshake finishes.
+            for (int i = 0; i < 30; i++)
+            {
+                if (ct.IsCancellationRequested) break;
+                int sent = await Task.Run(() => UdtNative.udt_send(socket, Utils.EmptyBytes, 0, 0), ct).ConfigureAwait(false);
+                if (sent >= 0) return; // connected
+                string err = UdtNative.GetErrorDesc();
+                if (!err.Contains("BOUND")) break; // different error — bail out
+                await Task.Delay(200, ct).ConfigureAwait(false);
             }
         }
     }
