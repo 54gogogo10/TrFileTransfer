@@ -1178,13 +1178,12 @@ namespace TrFileTransfer
         {
             // Poll with empty send until socket leaves BOUND state (handshake complete).
             // UDT returns ERROR with "BOUND" message until connection handshake finishes.
-            for (int i = 0; i < 30; i++)
+            // Use longer timeout for concurrent connections where handshake may queue.
+            for (int i = 0; i < 150; i++)
             {
                 if (ct.IsCancellationRequested) break;
                 int sent = await Task.Run(() => UdtNative.udt_send(socket, Utils.EmptyBytes, 0, 0), ct).ConfigureAwait(false);
                 if (sent >= 0) return; // connected
-                string err = UdtNative.GetErrorDesc();
-                if (!err.Contains("BOUND")) break; // different error — bail out
                 await Task.Delay(200, ct).ConfigureAwait(false);
             }
         }
