@@ -22,6 +22,9 @@ namespace TrFileTransfer
         // getsockopt/setsockopt option names
         public const int UDT_RCVTIMEO = 0;
         public const int UDT_SNDTIMEO = 1;
+        public const int UDT_SNDBUF = 2;
+        public const int UDT_RCVBUF = 3;
+        public const int UDT_MSS = 4;
 
         // Reference-counted startup/cleanup so concurrent server+client don't tear each other down
         private static int _refCount;
@@ -378,6 +381,9 @@ namespace TrFileTransfer
                     if (clientSocket < 0) break;
 
                     UdtNative.SetTimeout(clientSocket, 30000, 30000);
+                    int bufSize = 8 * 1024 * 1024; // 8 MB
+                    UdtNative.udt_setsockopt(clientSocket, 0, UdtNative.UDT_SNDBUF, ref bufSize, 4);
+                    UdtNative.udt_setsockopt(clientSocket, 0, UdtNative.UDT_RCVBUF, ref bufSize, 4);
                     lock (_clientSockets) { _clientSockets.Add(clientSocket); }
                     // sin_addr/sin_port are uint/ushort in network byte order.
                     // Must cast to unsigned before NetworkToHostOrder to avoid sign extension.
@@ -894,6 +900,10 @@ namespace TrFileTransfer
                 throw new Exception("UDT connect failed: " + UdtNative.GetErrorDesc());
             Log(L.C_Connected(_serverIp, _port));
             UdtNative.SetTimeout(_socket, 30000, 30000);
+            // Set larger buffers for better throughput
+            int bufSize = 8 * 1024 * 1024; // 8 MB
+            UdtNative.udt_setsockopt(_socket, 0, UdtNative.UDT_SNDBUF, ref bufSize, 4);
+            UdtNative.udt_setsockopt(_socket, 0, UdtNative.UDT_RCVBUF, ref bufSize, 4);
             await UdtIo.WaitForConnectionReady(_socket, ct);
         }
 

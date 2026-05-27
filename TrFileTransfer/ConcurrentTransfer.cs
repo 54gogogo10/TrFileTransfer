@@ -20,7 +20,6 @@ namespace TrFileTransfer
 
         private long _totalBytes;
         private long _transferredBytes;
-        private readonly object _progressLock = new object();
 
         public event Action<string> OnLog;
         public event Action<TransferProgress> OnProgress;
@@ -127,11 +126,12 @@ namespace TrFileTransfer
                     try
                     {
                         await SendFileAsync(file, localPort);
-                        lock (_progressLock)
-                        {
-                            _transferredBytes += fileSize;
-                            ReportProgress(Path.GetFileName(file));
-                        }
+                        long p, n;
+                        do {
+                            p = _transferredBytes;
+                            n = Math.Min(_totalBytes, p + fileSize);
+                        } while (Interlocked.CompareExchange(ref _transferredBytes, n, p) != p);
+                        ReportProgress(Path.GetFileName(file));
                     }
                     finally
                     {
@@ -162,40 +162,21 @@ namespace TrFileTransfer
                 if (_isUdt)
                 {
                     var client = new TransferUdtClient(_serverIp, _port, _filePath, localPort);
-                    client.OnProgress += p =>
-                    {
-                        lock (_progressLock)
-                        {
-                            long chunkBytes = p.BytesTransferred;
-                            if (chunkBytes > _transferredBytes)
-                                _transferredBytes = Math.Min(_totalBytes, chunkBytes);
-                            ReportProgress(_filePath);
-                        }
-                    };
                     await client.SendChunkedAsync(offset, size, totalSize);
                 }
                 else
                 {
                     var client = new TransferClient(_serverIp, _port, _filePath, localPort);
-                    client.OnProgress += p =>
-                    {
-                        lock (_progressLock)
-                        {
-                            long chunkBytes = p.BytesTransferred;
-                            if (chunkBytes > _transferredBytes)
-                                _transferredBytes = Math.Min(_totalBytes, chunkBytes);
-                            ReportProgress(_filePath);
-                        }
-                    };
                     await client.SendChunkedAsync(offset, size, totalSize);
                 }
 
-                // Accumulate completed chunk size: direct +size avoids baseTransferred=0 bug
-                lock (_progressLock)
-                {
-                    _transferredBytes = Math.Min(_totalBytes, _transferredBytes + size);
-                    ReportProgress(_filePath);
-                }
+                // Lock-free accumulation: add chunk size atomically, cap at _totalBytes
+                long prev, next;
+                do {
+                    prev = _transferredBytes;
+                    next = Math.Min(_totalBytes, prev + size);
+                } while (Interlocked.CompareExchange(ref _transferredBytes, next, prev) != prev);
+                ReportProgress(_filePath);
             }
             catch (Exception ex)
             {
