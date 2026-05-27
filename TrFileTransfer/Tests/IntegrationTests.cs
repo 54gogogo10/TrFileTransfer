@@ -26,6 +26,7 @@ namespace TrFileTransfer.Tests
         {
             runner.Run("Integration_TCP_SingleFile", TcpSingleFile);
             runner.Run("Integration_TCP_Folder", TcpFolder);
+            runner.Run("Integration_TCP_Concurrent10", TcpConcurrent10);
             runner.Run("Integration_UDT_SingleFile", UdtSingleFile);
             runner.Run("Integration_UDT_Concurrent10", UdtConcurrent10);
         }
@@ -223,6 +224,72 @@ namespace TrFileTransfer.Tests
                 var receivedContent = File.ReadAllBytes(receivedFile);
                 Assert.Equal(content.Length, receivedContent.Length, "UDT file size matches");
                 Assert.True(Utils.ConstantTimeEquals(content, receivedContent), "UDT content SHA256 match");
+            }
+            finally
+            {
+                try { if (server != null) server.Stop(); } catch { }
+                try { Directory.Delete(sendDir, true); } catch { }
+                try { Directory.Delete(recvDir, true); } catch { }
+            }
+        }
+
+        private static void TcpConcurrent10()
+        {
+            int port = FindFreePort();
+            string sendDir = Path.Combine(Path.GetTempPath(), "tr_it_tcpc_s_" + Guid.NewGuid().ToString("N"));
+            string recvDir = Path.Combine(Path.GetTempPath(), "tr_it_tcpc_r_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(sendDir);
+            Directory.CreateDirectory(recvDir);
+
+            TransferServer server = null;
+            try
+            {
+                var testFile = Path.Combine(sendDir, "tcp_concurrent_test.bin");
+                var rng = new Random(42);
+                var content = new byte[10 * 1024 * 1024]; // 10 MB
+                rng.NextBytes(content);
+                File.WriteAllBytes(testFile, content);
+
+                var serverStarted = new ManualResetEvent(false);
+                var serverDone = new ManualResetEvent(false);
+                bool serverOk = false;
+                string serverError = null;
+
+                server = new TransferServer("127.0.0.1", port, recvDir);
+                server.OnStarted += () => serverStarted.Set();
+                server.OnTransferComplete += () => { serverOk = true; serverDone.Set(); };
+                server.OnError += msg => { serverError = msg; serverDone.Set(); };
+                server.Start();
+
+                if (!serverStarted.WaitOne(5000))
+                    throw new Exception("TCP server did not start within 5s");
+
+                var clientDone = new ManualResetEvent(false);
+                bool clientOk = false;
+                var concurrent = new ConcurrentTransfer("127.0.0.1", port, testFile, 10, true);
+                concurrent.OnTransferComplete += () => { clientOk = true; clientDone.Set(); };
+                concurrent.OnError += msg => { clientDone.Set(); };
+
+                var sendTask = concurrent.SendAsync();
+
+                if (!serverDone.WaitOne(60000))
+                    throw new Exception("TCP server did not complete within 60s");
+                if (!serverOk)
+                    throw new Exception("TCP server error: " + (serverError ?? "unknown"));
+
+                sendTask.Wait(60000);
+                if (!clientDone.WaitOne(5000))
+                    throw new Exception("Concurrent client did not fire completion event");
+                if (!clientOk)
+                    throw new Exception("Concurrent transfer failed");
+
+                Thread.Sleep(300);
+
+                var receivedFile = Path.Combine(recvDir, "tcp_concurrent_test.bin");
+                Assert.True(File.Exists(receivedFile), "received concurrent file exists");
+                var receivedContent = File.ReadAllBytes(receivedFile);
+                Assert.Equal(content.Length, receivedContent.Length, "concurrent file size matches");
+                Assert.True(Utils.ConstantTimeEquals(content, receivedContent), "concurrent content SHA256 match");
             }
             finally
             {
