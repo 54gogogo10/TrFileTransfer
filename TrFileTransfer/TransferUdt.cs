@@ -1195,14 +1195,15 @@ namespace TrFileTransfer
         public static async Task WaitForConnectionReady(int socket, CancellationToken ct)
         {
             // Poll with empty send until socket leaves BOUND state (handshake complete).
-            // UDT returns ERROR with "BOUND" message until connection handshake finishes.
-            // Use longer timeout for concurrent connections where handshake may queue.
-            for (int i = 0; i < 150; i++)
+            // High concurrency means later connections wait for earlier handshakes to finish.
+            // Use short initial polls (50ms) then back off to 200ms after 100 attempts.
+            for (int i = 0; i < 600; i++)
             {
                 if (ct.IsCancellationRequested) break;
                 int sent = await Task.Run(() => UdtNative.udt_send(socket, Utils.EmptyBytes, 0, 0), ct).ConfigureAwait(false);
                 if (sent >= 0) return; // connected
-                await Task.Delay(200, ct).ConfigureAwait(false);
+                int delay = i < 100 ? 50 : 200; // fast poll first 5s, then 200ms
+                await Task.Delay(delay, ct).ConfigureAwait(false);
             }
         }
     }
