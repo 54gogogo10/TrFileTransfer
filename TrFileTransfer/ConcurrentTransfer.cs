@@ -180,12 +180,6 @@ namespace TrFileTransfer
                     };
                     await client.SendChunkedAsync(offset, size, totalSize);
                 }
-
-                lock (_progressLock)
-                {
-                    _transferredBytes += size;
-                    ReportProgress(_filePath);
-                }
             }
             catch (Exception ex)
             {

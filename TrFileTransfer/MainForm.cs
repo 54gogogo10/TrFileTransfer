@@ -814,7 +814,8 @@ namespace TrFileTransfer
             var info = card.Tag as ProgressCardInfo;
             if (info == null) return;
             if (p.TotalBytes > 0)
-                info.Bar.Value = (int)(p.BytesTransferred * 100 / p.TotalBytes);
+                info.Bar.Value = Math.Max(0, Math.Min(100,
+                    (int)(p.BytesTransferred * 100 / p.TotalBytes)));
             int pct = p.TotalBytes > 0 ? (int)(p.BytesTransferred * 100 / p.TotalBytes) : 0;
             string speed = Utils.FormatSize((long)p.SpeedBytesPerSecond) + "/s";
             info.Label.Text = string.Format("{0} | {1} | {2}% | {3}/{4}",
