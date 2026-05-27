@@ -159,15 +159,25 @@ namespace TrFileTransfer
         {
             try
             {
+                long baseTransferred = _transferredBytes;
                 if (_isUdt)
                 {
                     var client = new TransferUdtClient(_serverIp, _port, _filePath, localPort);
+                    client.OnProgress += p =>
+                    {
+                        lock (_progressLock)
+                        {
+                            long candidate = baseTransferred + p.BytesTransferred;
+                            if (candidate > _transferredBytes)
+                                _transferredBytes = candidate;
+                            ReportProgress(_filePath);
+                        }
+                    };
                     await client.SendChunkedAsync(offset, size, totalSize);
                 }
                 else
                 {
                     var client = new TransferClient(_serverIp, _port, _filePath, localPort);
-                    long baseTransferred = _transferredBytes;
                     client.OnProgress += p =>
                     {
                         lock (_progressLock)
