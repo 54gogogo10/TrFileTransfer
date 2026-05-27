@@ -159,36 +159,41 @@ namespace TrFileTransfer
         {
             try
             {
-                long baseTransferred = _transferredBytes;
-                Action<TransferProgress> onProgress = p =>
-                {
-                    lock (_progressLock)
-                    {
-                        long candidate = baseTransferred + p.BytesTransferred;
-                        if (candidate > _transferredBytes)
-                            _transferredBytes = candidate;
-                        ReportProgress(_filePath);
-                    }
-                };
                 if (_isUdt)
                 {
                     var client = new TransferUdtClient(_serverIp, _port, _filePath, localPort);
-                    client.OnProgress += onProgress;
+                    client.OnProgress += p =>
+                    {
+                        lock (_progressLock)
+                        {
+                            long chunkBytes = p.BytesTransferred;
+                            if (chunkBytes > _transferredBytes)
+                                _transferredBytes = Math.Min(_totalBytes, chunkBytes);
+                            ReportProgress(_filePath);
+                        }
+                    };
                     await client.SendChunkedAsync(offset, size, totalSize);
                 }
                 else
                 {
                     var client = new TransferClient(_serverIp, _port, _filePath, localPort);
-                    client.OnProgress += onProgress;
+                    client.OnProgress += p =>
+                    {
+                        lock (_progressLock)
+                        {
+                            long chunkBytes = p.BytesTransferred;
+                            if (chunkBytes > _transferredBytes)
+                                _transferredBytes = Math.Min(_totalBytes, chunkBytes);
+                            ReportProgress(_filePath);
+                        }
+                    };
                     await client.SendChunkedAsync(offset, size, totalSize);
                 }
 
-                // Ensure progress advances even if chunk finished without firing OnProgress
+                // Accumulate completed chunk size: direct +size avoids baseTransferred=0 bug
                 lock (_progressLock)
                 {
-                    long candidate = baseTransferred + size;
-                    if (candidate > _transferredBytes)
-                        _transferredBytes = Math.Min(_totalBytes, candidate);
+                    _transferredBytes = Math.Min(_totalBytes, _transferredBytes + size);
                     ReportProgress(_filePath);
                 }
             }

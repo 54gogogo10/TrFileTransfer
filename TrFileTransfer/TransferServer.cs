@@ -245,10 +245,9 @@ namespace TrFileTransfer
                 Log(L.S_TransferDone(fileName, Utils.FormatSize(fileSize),
                     sw.Elapsed.TotalSeconds,
                     Utils.FormatSize((long)(fileSize / Math.Max(sw.Elapsed.TotalSeconds, 0.001)))));
+                var completeHandler = OnTransferComplete;
+                if (completeHandler != null) completeHandler();
             }
-
-            var completeHandler = OnTransferComplete;
-            if (completeHandler != null) completeHandler();
         }
 
         private async Task HandleChunkedFile(NetworkStream stream, CancellationToken ct)

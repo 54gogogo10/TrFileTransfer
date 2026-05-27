@@ -584,7 +584,7 @@ namespace TrFileTransfer
             long chunkOffset = BitConverter.ToInt64(chunkHeader, 8);
             long chunkSize = BitConverter.ToInt64(chunkHeader, 16);
             int nameLen = BitConverter.ToInt32(chunkHeader, 24);
-            if (nameLen <= 0 || nameLen > 4096 || totalSize <= 0 || chunkSize <= 0) return false;
+            if (nameLen <= 0 || nameLen > 4096 || totalSize <= 0 || chunkOffset < 0 || chunkSize <= 0) return false;
 
             var nameBuf = new byte[nameLen];
             if (await UdtIo.UdtReadExactAsync(clientSocket, nameBuf, 0, nameLen, ct) == 0) return false;
@@ -596,6 +596,17 @@ namespace TrFileTransfer
 
             var receivedHash = new byte[32];
             if (await UdtIo.UdtReadExactAsync(clientSocket, receivedHash, 0, 32, ct) == 0) return false;
+
+            // Verify chunk hash before writing
+            using (var sha256 = SHA256.Create())
+            {
+                var computedHash = sha256.ComputeHash(chunkData);
+                if (!Utils.ConstantTimeEquals(receivedHash, computedHash))
+                {
+                    Log(L.S_HashFailed(fileName));
+                    return false;
+                }
+            }
 
             var tracker = ChunkTracker.GetOrCreate(_chunkTrackers, fileName, totalSize, _saveDirectory);
             bool isComplete = tracker.WriteChunk(chunkOffset, chunkData, (int)chunkSize);
@@ -1037,30 +1048,44 @@ namespace TrFileTransfer
             {
                 if (fileOffset > 0)
                     fileStream.Seek(fileOffset, SeekOrigin.Begin);
-                int read = await fileStream.ReadAsync(bufA, 0, bufA.Length, ct);
-                if (read == 0)
+
+                long remaining = fileSize;
+                if (remaining == 0)
                 {
                     sha256.TransformFinalBlock(Utils.EmptyBytes, 0, 0);
                     await UdtIo.UdtWriteExactAsync(clientSocket, sha256.Hash, 0, 32, ct);
                     return;
                 }
 
+                int toRead = (int)Math.Min(remaining, (long)bufA.Length);
+                int read = await fileStream.ReadAsync(bufA, 0, toRead, ct);
+                if (read <= 0)
+                {
+                    sha256.TransformFinalBlock(Utils.EmptyBytes, 0, 0);
+                    await UdtIo.UdtWriteExactAsync(clientSocket, sha256.Hash, 0, 32, ct);
+                    return;
+                }
+                remaining -= read;
+
                 var cur = bufA;
                 var nxt = bufB;
 
-                while (read > 0 && !ct.IsCancellationRequested)
+                while (remaining > 0 && !ct.IsCancellationRequested)
                 {
-                    var nextReadTask = fileStream.ReadAsync(nxt, 0, nxt.Length, ct);
+                    int nextToRead = (int)Math.Min(remaining, (long)nxt.Length);
+                    var nextReadTask = fileStream.ReadAsync(nxt, 0, nextToRead, ct);
 
                     sha256.TransformBlock(cur, 0, read, null, 0);
                     await UdtIo.UdtWriteExactAsync(clientSocket, cur, 0, read, ct);
                     bytesSent += read;
 
                     read = await nextReadTask;
+                    if (read <= 0) break;
+                    remaining -= read;
 
                     var tmp = cur; cur = nxt; nxt = tmp;
 
-                    if (progressTimer.ElapsedMilliseconds >= 100 || read == 0)
+                    if (progressTimer.ElapsedMilliseconds >= 100 || remaining == 0)
                     {
                         progressTimer.Restart();
                         var handler = OnProgress;
@@ -1074,6 +1099,13 @@ namespace TrFileTransfer
                                 FileName = displayName
                             });
                     }
+                }
+
+                if (read > 0)
+                {
+                    sha256.TransformBlock(cur, 0, read, null, 0);
+                    await UdtIo.UdtWriteExactAsync(clientSocket, cur, 0, read, ct);
+                    bytesSent += read;
                 }
                 sha256.TransformFinalBlock(Utils.EmptyBytes, 0, 0);
                 await UdtIo.UdtWriteExactAsync(clientSocket, sha256.Hash, 0, 32, ct);
