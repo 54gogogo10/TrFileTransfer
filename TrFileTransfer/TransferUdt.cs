@@ -602,25 +602,35 @@ namespace TrFileTransfer
             string fileName = System.Text.Encoding.UTF8.GetString(nameBuf);
             fileName = Path.GetFileName(fileName);
 
-            var chunkData = new byte[chunkSize];
-            if (await UdtIo.UdtReadExactAsync(clientSocket, chunkData, 0, (int)chunkSize, ct) == 0) return false;
+            // Stream chunk data through a fixed buffer — no giant array allocation
+            const int BufSize = 1048576;
+            var buf = new byte[BufSize];
+            var tracker = ChunkTracker.GetOrCreate(_chunkTrackers, fileName, totalSize, _saveDirectory);
 
-            var receivedHash = new byte[32];
-            if (await UdtIo.UdtReadExactAsync(clientSocket, receivedHash, 0, 32, ct) == 0) return false;
-
-            // Verify chunk hash before writing
+            bool isComplete = false;
             using (var sha256 = SHA256.Create())
             {
-                var computedHash = sha256.ComputeHash(chunkData);
-                if (!Utils.ConstantTimeEquals(receivedHash, computedHash))
+                long remaining = chunkSize;
+                long writeOffset = chunkOffset;
+                while (remaining > 0 && !ct.IsCancellationRequested)
+                {
+                    int toRead = (int)Math.Min(remaining, (long)BufSize);
+                    if (await UdtIo.UdtReadExactAsync(clientSocket, buf, 0, toRead, ct) == 0) return false;
+                    sha256.TransformBlock(buf, 0, toRead, null, 0);
+                    isComplete = tracker.WriteChunk(writeOffset, buf, toRead);
+                    writeOffset += toRead;
+                    remaining -= toRead;
+                }
+                sha256.TransformFinalBlock(Utils.EmptyBytes, 0, 0);
+
+                var receivedHash = new byte[32];
+                if (await UdtIo.UdtReadExactAsync(clientSocket, receivedHash, 0, 32, ct) == 0) return false;
+                if (!Utils.ConstantTimeEquals(receivedHash, sha256.Hash))
                 {
                     Log(L.S_HashFailed(fileName));
                     return false;
                 }
             }
-
-            var tracker = ChunkTracker.GetOrCreate(_chunkTrackers, fileName, totalSize, _saveDirectory);
-            bool isComplete = tracker.WriteChunk(chunkOffset, chunkData, (int)chunkSize);
             Log("Chunk: " + fileName + " offset=" + chunkOffset + " size=" + chunkSize);
 
             // Report aggregate progress across all chunks

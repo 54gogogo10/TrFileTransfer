@@ -273,33 +273,35 @@ namespace TrFileTransfer
             if (string.IsNullOrWhiteSpace(fileName))
                 fileName = L.S_ReceivedFile;
 
-            // Validate chunk size
-            if (chunkSize > 1073741824L) // 1 GB sanity cap
-            {
-                Log(L.S_InvalidHeader(totalSize, (int)chunkSize));
-                return;
-            }
-
             ChunkTracker tracker = ChunkTracker.GetOrCreate(
                 _chunkTrackers, fileName, totalSize, _saveDirectory);
 
-            // Read chunk data and hash
-            var chunkData = new byte[chunkSize];
-            await ReadExactAsync(stream, chunkData, 0, (int)chunkSize, ct);
-
-            var receivedHash = new byte[32];
-            await ReadExactAsync(stream, receivedHash, 0, 32, ct);
-
+            // Stream chunk data through a fixed-size buffer — no giant array allocation
+            const int BufSize = 1048576;
+            var buf = new byte[BufSize];
             bool hashOk;
+            bool isComplete = false;
             using (var sha256 = SHA256.Create())
             {
-                var computedHash = sha256.ComputeHash(chunkData);
-                hashOk = Utils.ConstantTimeEquals(receivedHash, computedHash);
+                long remaining = chunkSize;
+                long writeOffset = chunkOffset;
+                while (remaining > 0 && !ct.IsCancellationRequested)
+                {
+                    int toRead = (int)Math.Min(remaining, (long)BufSize);
+                    await ReadExactAsync(stream, buf, 0, toRead, ct);
+                    sha256.TransformBlock(buf, 0, toRead, null, 0);
+                    isComplete = tracker.WriteChunk(writeOffset, buf, toRead);
+                    writeOffset += toRead;
+                    remaining -= toRead;
+                }
+                sha256.TransformFinalBlock(Utils.EmptyBytes, 0, 0);
+                var receivedHash = new byte[32];
+                await ReadExactAsync(stream, receivedHash, 0, 32, ct);
+                hashOk = Utils.ConstantTimeEquals(receivedHash, sha256.Hash);
             }
 
             if (hashOk)
             {
-                bool isComplete = tracker.WriteChunk(chunkOffset, chunkData, _bufferSize);
 
                 // Report aggregate progress across all chunks
                 var progressHandler = OnProgress;
