@@ -42,7 +42,7 @@ namespace TrFileTransfer
         /// <param name="port">Target server port.</param>
         /// <param name="filePath">Path to the file or folder to send.</param>
         /// <param name="bufferSize">I/O buffer size in bytes (default 1 MB).</param>
-        public TransferClient(string serverIp, int port, string filePath, int bufferSize = 1024 * 1024)
+        public TransferClient(string serverIp, int port, string filePath, int bufferSize = 4194304)
         {
             _serverIp = serverIp;
             _port = port;
@@ -51,7 +51,7 @@ namespace TrFileTransfer
         }
 
         /// <summary>Creates a TCP client bound to a specific local port for concurrent transfers.</summary>
-        public TransferClient(string serverIp, int port, string filePath, int localPort, int bufferSize = 1024 * 1024)
+        public TransferClient(string serverIp, int port, string filePath, int localPort, int bufferSize = 4194304)
             : this(serverIp, port, filePath, bufferSize)
         {
             _localPort = localPort;

@@ -603,7 +603,7 @@ namespace TrFileTransfer
             fileName = Path.GetFileName(fileName);
 
             // Stream chunk data through a fixed buffer — no giant array allocation
-            const int BufSize = 1048576;
+            const int BufSize = 4194304; // 4 MB
             var buf = new byte[BufSize];
             var tracker = ChunkTracker.GetOrCreate(_chunkTrackers, fileName, totalSize, _saveDirectory);
 
@@ -666,7 +666,7 @@ namespace TrFileTransfer
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             long bytesRead = 0;
-            const int BufferSize = 1048576;
+            const int BufferSize = 4194304; // 4 MB
             var bufA = new byte[BufferSize];
             var bufB = new byte[BufferSize];
             var progressTimer = System.Diagnostics.Stopwatch.StartNew();
@@ -806,7 +806,7 @@ namespace TrFileTransfer
         /// <param name="port">Target server port.</param>
         /// <param name="filePath">Path to the file or folder to send.</param>
         /// <param name="bufferSize">I/O buffer size in bytes (default 1 MB).</param>
-        public TransferUdtClient(string serverIp, int port, string filePath, int bufferSize = 1048576)
+        public TransferUdtClient(string serverIp, int port, string filePath, int bufferSize = 4194304)
         {
             _serverIp = serverIp;
             _port = port;
@@ -815,7 +815,7 @@ namespace TrFileTransfer
         }
 
         /// <summary>Creates a UDT client bound to a specific local port for concurrent transfers.</summary>
-        public TransferUdtClient(string serverIp, int port, string filePath, int localPort, int bufferSize = 1048576)
+        public TransferUdtClient(string serverIp, int port, string filePath, int localPort, int bufferSize = 4194304)
         {
             _serverIp = serverIp;
             _port = port;

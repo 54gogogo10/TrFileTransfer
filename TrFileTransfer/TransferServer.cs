@@ -51,7 +51,7 @@ namespace TrFileTransfer
         /// <param name="port">Port to listen on.</param>
         /// <param name="saveDirectory">Directory where received files are saved.</param>
         /// <param name="bufferSize">I/O buffer size in bytes (default 1 MB).</param>
-        public TransferServer(string bindAddress, int port, string saveDirectory, int bufferSize = 1024 * 1024)
+        public TransferServer(string bindAddress, int port, string saveDirectory, int bufferSize = 4194304)
         {
             _bindAddress = bindAddress;
             _port = port;
@@ -277,7 +277,7 @@ namespace TrFileTransfer
                 _chunkTrackers, fileName, totalSize, _saveDirectory);
 
             // Stream chunk data through a fixed-size buffer — no giant array allocation
-            const int BufSize = 1048576;
+            const int BufSize = 4194304;
             var buf = new byte[BufSize];
             bool hashOk;
             bool isComplete = false;
