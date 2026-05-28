@@ -873,10 +873,12 @@ namespace TrFileTransfer
                 _isRunning = false;
                 if (_socket >= 0)
                 {
-                    // Allow server time to receive all data before closing.
-                    // UDT over UDP means close may outpace in-flight data delivery.
-                    // Large chunks need more time for server to process.
-                    System.Threading.Thread.Sleep(500);
+                    // Wait for server to receive all data before closing.
+                    // Drain recv with short timeout: returns quickly if server already
+                    // closed; blocks briefly if data still in-flight.
+                    int shortTimeout = 2000;
+                    UdtNative.udt_setsockopt(_socket, 0, UdtNative.UDT_RCVTIMEO, ref shortTimeout, 4);
+                    try { var d = new byte[1]; UdtNative.udt_recv(_socket, d, 1, 0); } catch { }
                     try { UdtNative.udt_close(_socket); } catch { }
                     _socket = -1;
                 }
